@@ -1,923 +1,624 @@
-from __future__ import annotations
-
+import math
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 import yfinance as yf
+import plotly.graph_objects as go
 
+# =========================
+# 页面与样式
+# =========================
+st.set_page_config(page_title="短线情绪板块选股器", page_icon="📈", layout="wide")
 
-# -----------------------------
-# Page
-# -----------------------------
-st.set_page_config(
-    page_title="消闲派板块优先选股器",
-    page_icon="🧭",
-    layout="wide",
-)
+CSS = """
+<style>
+:root {
+  --bg: #f7f8fb;
+  --card: #ffffff;
+  --text: #111827;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --green: #059669;
+  --red: #dc2626;
+  --blue: #2563eb;
+  --orange: #f97316;
+  --shadow: 0 8px 26px rgba(15, 23, 42, .08);
+}
+.stApp { background: var(--bg); color: var(--text); }
+.block-container { padding-top: .55rem; padding-bottom: 2.2rem; max-width: 1180px; }
+section[data-testid="stSidebar"] { background: #ffffff; border-right: 1px solid var(--line); }
+section[data-testid="stSidebar"] .block-container { padding-top: 1rem; }
+[data-testid="stDecoration"] { display:none; }
+#MainMenu, footer, header { visibility: hidden; height: 0; }
 
-st.markdown(
-    """
-    <style>
-    :root{
-      --bg0:#05070d;
-      --bg1:#0b1020;
-      --glass:rgba(255,255,255,.075);
-      --glass-strong:rgba(255,255,255,.12);
-      --line:rgba(255,255,255,.14);
-      --text:#f8fafc;
-      --muted:#94a3b8;
-      --blue:#0A84FF;
-      --green:#30D158;
-      --orange:#FF9F0A;
-      --red:#FF453A;
-      --purple:#BF5AF2;
-    }
-    .stApp{
-      background:
-        radial-gradient(900px 480px at 8% -10%, rgba(10,132,255,.28), transparent 60%),
-        radial-gradient(800px 520px at 95% 5%, rgba(191,90,242,.18), transparent 62%),
-        linear-gradient(180deg, #05070d 0%, #0b1020 46%, #090b12 100%);
-      color:var(--text);
-    }
-    .block-container{padding-top:.9rem; padding-bottom:2rem; max-width:1180px;}
-    header[data-testid="stHeader"]{background:rgba(5,7,13,.55); backdrop-filter:blur(18px);}
-    footer{visibility:hidden;}
-    #MainMenu{visibility:hidden;}
+.tv-topbar {
+  position: sticky; top: 0; z-index: 999; background: rgba(247,248,251,.86);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid rgba(229,231,235,.65);
+  padding: .65rem .2rem .75rem .2rem; margin: -.55rem 0 .8rem 0;
+}
+.tv-title { font-size: 1.45rem; font-weight: 850; letter-spacing: -.02em; line-height: 1.1; }
+.tv-subtitle { color: var(--muted); font-size: .92rem; margin-top: .2rem; }
 
-    .apple-hero{
-      position:relative;
-      overflow:hidden;
-      border:1px solid var(--line);
-      border-radius:30px;
-      padding:28px 28px 24px;
-      background:
-        linear-gradient(135deg, rgba(255,255,255,.13), rgba(255,255,255,.04)),
-        radial-gradient(520px 260px at 85% 15%, rgba(10,132,255,.35), transparent 70%),
-        radial-gradient(420px 240px at 20% 0%, rgba(48,209,88,.16), transparent 70%);
-      box-shadow:0 24px 80px rgba(0,0,0,.38);
-      backdrop-filter: blur(24px);
-      margin-bottom:18px;
-    }
-    .hero-kicker{font-size:.86rem; color:#b8c1d6; letter-spacing:.08em; text-transform:uppercase; margin-bottom:10px;}
-    .hero-title{font-size:2.25rem; line-height:1.08; font-weight:850; letter-spacing:-.035em; margin:0 0 12px;}
-    .hero-sub{font-size:1.02rem; color:#cbd5e1; line-height:1.75; max-width:780px;}
-    .hero-pills{display:flex; flex-wrap:wrap; gap:10px; margin-top:18px;}
-    .pill{
-      display:inline-flex; align-items:center; gap:6px;
-      padding:8px 12px; border-radius:999px;
-      color:#eaf2ff; background:rgba(255,255,255,.08);
-      border:1px solid rgba(255,255,255,.14);
-      font-size:.86rem; backdrop-filter:blur(18px);
-    }
-    .mini-card{
-      border:1px solid var(--line);
-      border-radius:22px;
-      background:linear-gradient(180deg, rgba(255,255,255,.105), rgba(255,255,255,.045));
-      padding:18px 18px 16px;
-      box-shadow:0 16px 42px rgba(0,0,0,.25);
-      min-height:112px;
-      backdrop-filter:blur(22px);
-    }
-    .mini-label{font-size:.82rem; color:#9fb0c6; margin-bottom:7px;}
-    .mini-value{font-size:1.75rem; font-weight:850; letter-spacing:-.02em;}
-    .mini-note{font-size:.82rem; color:#9aa7bd; margin-top:8px; line-height:1.45;}
-    .section-title{font-size:1.25rem; font-weight:800; letter-spacing:-.02em; margin:22px 0 10px;}
-    .section-caption{color:#94a3b8; font-size:.92rem; line-height:1.6; margin-top:-4px; margin-bottom:12px;}
-    .glass-panel{
-      border:1px solid var(--line);
-      border-radius:26px;
-      background:rgba(255,255,255,.065);
-      box-shadow:0 18px 60px rgba(0,0,0,.30);
-      padding:18px;
-      backdrop-filter:blur(24px);
-      margin:14px 0;
-    }
-    .rank-card{
-      border:1px solid rgba(255,255,255,.12);
-      border-radius:22px;
-      background:rgba(255,255,255,.07);
-      padding:16px;
-      min-height:130px;
-    }
-    .rank-num{font-size:.82rem; color:#8ea0bd; margin-bottom:8px;}
-    .rank-name{font-size:1.35rem; font-weight:840; letter-spacing:-.02em;}
-    .rank-score{font-size:2rem; font-weight:900; color:#0A84FF; margin-top:8px;}
-    .rank-note{font-size:.84rem; color:#a8b3c7; margin-top:8px; line-height:1.45;}
-    .signal-buy{color:#30D158; font-weight:800;}
-    .signal-watch{color:#FF9F0A; font-weight:800;}
-    .signal-risk{color:#FF453A; font-weight:800;}
-    .small-note{color:#9fb0c6;font-size:.92rem;line-height:1.65;}
+.kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: .72rem; margin: .75rem 0 .9rem; }
+.kpi-card { background: var(--card); border:1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); padding: .88rem; }
+.kpi-label { color: var(--muted); font-size: .78rem; }
+.kpi-value { font-size: 1.35rem; font-weight: 850; margin-top:.28rem; }
+.kpi-note { color: var(--muted); font-size: .76rem; margin-top:.2rem; }
 
-    div[data-testid="stSidebar"] > div:first-child{
-      background:rgba(10,14,24,.82);
-      backdrop-filter: blur(26px);
-      border-right:1px solid rgba(255,255,255,.10);
-    }
-    div[data-testid="stMetric"]{
-      border:1px solid rgba(255,255,255,.13);
-      background:linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.045));
-      padding:14px 16px; border-radius:22px;
-      box-shadow:0 12px 36px rgba(0,0,0,.22);
-    }
-    div[data-testid="stMetricLabel"]{color:#aab6cb;}
-    div[data-testid="stMetricValue"]{font-weight:850; letter-spacing:-.03em;}
-    .stButton > button{
-      width:100%;
-      border:0;
-      border-radius:18px;
-      padding:.82rem 1rem;
-      font-weight:800;
-      letter-spacing:.01em;
-      background:linear-gradient(135deg, #0A84FF, #5E5CE6) !important;
-      color:white !important;
-      box-shadow:0 16px 40px rgba(10,132,255,.32);
-      transition:transform .18s ease, box-shadow .18s ease, filter .18s ease;
-    }
-    .stButton > button:hover{transform:translateY(-1px); filter:brightness(1.07); box-shadow:0 18px 46px rgba(10,132,255,.42);}
-    div[data-testid="stDataFrame"]{
-      border-radius:22px !important;
-      overflow:hidden;
-      border:1px solid rgba(255,255,255,.12);
-      box-shadow:0 16px 48px rgba(0,0,0,.26);
-    }
-    .stTabs [data-baseweb="tab-list"]{gap:8px; background:rgba(255,255,255,.055); border-radius:18px; padding:6px; border:1px solid rgba(255,255,255,.10);}
-    .stTabs [data-baseweb="tab"]{border-radius:14px; padding:9px 14px; font-weight:700; color:#cbd5e1;}
-    .stTabs [aria-selected="true"]{background:rgba(255,255,255,.13); color:#fff;}
-    .stAlert{border-radius:20px; border:1px solid rgba(255,255,255,.12);}
-    @media (max-width: 700px){
-      .block-container{padding-left:.65rem; padding-right:.65rem;}
-      .apple-hero{border-radius:24px; padding:22px 18px 20px;}
-      .hero-title{font-size:1.55rem;}
-      .hero-sub{font-size:.92rem;}
-      .pill{font-size:.78rem; padding:7px 10px;}
-      .mini-card{border-radius:20px; padding:14px; min-height:94px;}
-      .mini-value{font-size:1.35rem;}
-      .rank-card{min-height:108px;}
-      .rank-name{font-size:1.05rem;}
-      .rank-score{font-size:1.45rem;}
-      h1{font-size:1.4rem !important;}
-      h2,h3{font-size:1.08rem !important;}
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+.list-card { background: var(--card); border:1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); padding: .3rem .35rem; margin: .55rem 0; }
+.row-card { display: grid; grid-template-columns: 52px 1fr auto; gap: .72rem; align-items: center; padding: .72rem .55rem; border-bottom:1px solid var(--line); }
+.row-card:last-child { border-bottom:none; }
+.logo-dot { width: 42px; height: 42px; border-radius: 50%; display:flex; align-items:center; justify-content:center; font-weight:850; color:white; background: linear-gradient(135deg,#2563eb,#7c3aed); font-size: .85rem; }
+.sym { font-size:1.05rem; font-weight:850; letter-spacing:.01em; }
+.name { font-size:.82rem; color:var(--muted); margin-top:.12rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 360px; }
+.price { text-align:right; font-size:1.04rem; font-weight:820; }
+.chg-pos { color: var(--green); font-weight: 800; }
+.chg-neg { color: var(--red); font-weight: 800; }
+.signal-pill { display:inline-block; border-radius:999px; padding:.18rem .48rem; font-size:.72rem; font-weight:850; margin-left:.3rem; }
+.pill-buy { background:#fee2e2; color:#b91c1c; }
+.pill-watch { background:#dbeafe; color:#1d4ed8; }
+.pill-risk { background:#f3f4f6; color:#4b5563; }
+.pill-limit { background:#ffedd5; color:#c2410c; }
 
+.sector-grid { display:grid; grid-template-columns: repeat(2, 1fr); gap:.75rem; }
+.sector-card { background:var(--card); border:1px solid var(--line); border-radius:18px; box-shadow:var(--shadow); padding:.9rem; }
+.sector-name { font-weight:850; font-size:1.02rem; }
+.sector-score { font-size:1.55rem; font-weight:900; margin:.35rem 0 .15rem; }
+.muted { color:var(--muted); }
+.reason-box { background:#fff; border:1px solid var(--line); border-radius:16px; padding:.85rem; box-shadow: var(--shadow); }
+.warning-box { background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; border-radius:16px; padding:.85rem; }
+.good-box { background:#ecfdf5; border:1px solid #a7f3d0; color:#065f46; border-radius:16px; padding:.85rem; }
 
-# -----------------------------
-# Pools and tags
-# -----------------------------
-US_POOLS: Dict[str, List[str]] = {
-    "AI/芯片": [
-        "NVDA", "AMD", "AVGO", "ARM", "MU", "SMCI", "TSM", "ASML", "QCOM", "MRVL",
-        "INTC", "ON", "AMAT", "LRCX", "KLAC", "SMH", "SOXX", "SOXL",
-    ],
-    "大型科技": [
-        "MSFT", "AAPL", "META", "AMZN", "GOOGL", "GOOG", "NFLX", "CRM", "ORCL", "ADBE", "NOW", "SHOP",
-    ],
-    "高波动成长": [
-        "TSLA", "PLTR", "APP", "UBER", "ABNB", "RBLX", "ROKU", "SNOW", "DDOG", "CRWD", "NET", "OKTA", "ZS",
-    ],
-    "加密/金融科技": [
-        "MSTR", "COIN", "HOOD", "RIOT", "MARA", "CLSK", "IREN", "HUT", "IBIT", "ETHE", "SQ", "PYPL",
-    ],
-    "杠杆ETF": [
-        "TQQQ", "SQQQ", "SOXL", "SOXS", "UPRO", "SPXL", "SPXS", "TECL", "TECS", "TNA", "LABU",
-    ],
-    "新股/高波动关注": [
-        "SPCX", "CRCL", "RDDT", "ARM", "CAVA", "BIRK", "KVUE", "IOT", "SOUN", "BBAI",
-    ],
+.stButton > button { border-radius: 999px; padding: .68rem 1.05rem; font-weight: 850; border: 0; box-shadow: var(--shadow); }
+.stDataFrame, div[data-testid="stDataFrame"] { border-radius: 18px; overflow: hidden; }
+
+@media(max-width: 760px) {
+ .block-container { padding-left: .72rem; padding-right: .72rem; }
+ .tv-title { font-size: 1.22rem; }
+ .tv-subtitle { font-size: .82rem; }
+ .kpi-grid { grid-template-columns: repeat(2, 1fr); gap:.55rem; }
+ .kpi-card { padding:.72rem; border-radius:16px; }
+ .kpi-value { font-size:1.15rem; }
+ .sector-grid { grid-template-columns: 1fr; }
+ .row-card { grid-template-columns: 44px 1fr auto; gap:.55rem; padding:.65rem .36rem; }
+ .logo-dot { width:36px; height:36px; font-size:.74rem; }
+ .sym { font-size:.95rem; }
+ .name { max-width: 150px; font-size:.76rem; }
+ .price { font-size:.92rem; }
+ .signal-pill { font-size:.66rem; padding:.12rem .38rem; }
+}
+</style>
+"""
+st.markdown(CSS, unsafe_allow_html=True)
+
+# =========================
+# 数据池：可扩展
+# =========================
+US_SECTORS: Dict[str, List[str]] = {
+    "AI/芯片": ["NVDA", "AMD", "AVGO", "ARM", "MU", "SMCI", "MRVL", "TSM", "ASML", "SMH", "SOXL"],
+    "大型科技": ["AAPL", "MSFT", "META", "AMZN", "GOOGL", "NFLX", "TSLA", "PLTR", "APP", "ORCL", "NOW"],
+    "加密/金融科技": ["COIN", "MSTR", "HOOD", "MARA", "RIOT", "CLSK", "SQ", "PYPL", "IBIT", "BITO"],
+    "军工/太空": ["SPCX", "RKLB", "LMT", "NOC", "RTX", "BA", "GE", "ASTS", "LUNR"],
+    "能源/核电": ["CCJ", "CEG", "OKLO", "SMR", "URA", "XOM", "CVX", "OXY", "SLB"],
+    "医疗/生物科技": ["LLY", "NVO", "MRNA", "REGN", "VRTX", "UNH", "PFE", "XBI"],
+    "ETF/指数": ["SPY", "QQQ", "DIA", "IWM", "TQQQ", "SQQQ", "SMH", "SOXL"],
 }
 
-CN_POOLS_RAW: Dict[str, List[str]] = {
-    "A股AI/算力": [
-        "002230", "000977", "002415", "300308", "603019", "600570", "688256", "688041", "300502", "300033",
-    ],
-    "A股芯片/半导体": [
-        "688981", "603501", "002371", "300223", "688008", "688012", "600584", "002156", "600460", "002049", "300782",
-    ],
-    "A股新能源/汽车": [
-        "300750", "002594", "601012", "002812", "300274", "002466", "600438", "300014", "002459", "601127",
-    ],
-    "A股高成交核心": [
-        "600519", "000858", "601899", "600030", "601318", "600036", "601166", "601398", "000001", "300760", "000651",
-    ],
-    "A股军工/机器人/高端制造": [
-        "002179", "600150", "600760", "000768", "300124", "002050", "300024", "002475", "300450", "002236",
-    ],
+CN_SECTORS: Dict[str, List[str]] = {
+    "A股AI/算力": ["300308", "002230", "300502", "601138", "002415", "000938", "603019", "688041", "688256", "300474"],
+    "A股芯片/半导体": ["688981", "600584", "002371", "603986", "688012", "300604", "002049", "688008", "300782", "002475"],
+    "A股机器人": ["300024", "002527", "002031", "300124", "603960", "002747", "688017", "301029"],
+    "A股低空经济": ["002085", "600316", "300424", "300159", "000099", "600879", "300900", "688297"],
+    "A股证券金融": ["600030", "601688", "000776", "601211", "600837", "600999", "300059", "601099"],
+    "A股新能源/汽车": ["300750", "002594", "601012", "002466", "002812", "600438", "002460", "600418", "601127"],
+    "A股高成交核心": ["600519", "000858", "601318", "600036", "601899", "601398", "600900", "000001", "000333", "600276"],
 }
 
+NAME_MAP: Dict[str, str] = {
+    # US
+    "NVDA":"英伟达", "AMD":"AMD", "AVGO":"博通", "ARM":"Arm", "MU":"美光科技", "SMCI":"超微电脑", "MRVL":"迈威尔", "TSM":"台积电", "ASML":"阿斯麦", "SMH":"半导体ETF", "SOXL":"三倍做多半导体ETF",
+    "AAPL":"苹果", "MSFT":"微软", "META":"Meta", "AMZN":"亚马逊", "GOOGL":"谷歌", "NFLX":"奈飞", "TSLA":"特斯拉", "PLTR":"Palantir", "APP":"AppLovin", "ORCL":"甲骨文", "NOW":"ServiceNow",
+    "COIN":"Coinbase", "MSTR":"MicroStrategy", "HOOD":"Robinhood", "MARA":"MARA", "RIOT":"Riot", "CLSK":"CleanSpark", "SQ":"Block", "PYPL":"PayPal", "IBIT":"比特币ETF", "BITO":"比特币期货ETF",
+    "SPCX":"SpaceX", "RKLB":"Rocket Lab", "LMT":"洛克希德马丁", "NOC":"诺斯罗普", "RTX":"RTX", "BA":"波音", "GE":"GE Aerospace", "ASTS":"AST SpaceMobile", "LUNR":"Intuitive Machines",
+    "CCJ":"Cameco", "CEG":"Constellation Energy", "OKLO":"Oklo", "SMR":"NuScale", "URA":"铀矿ETF", "XOM":"埃克森美孚", "CVX":"雪佛龙", "OXY":"西方石油", "SLB":"斯伦贝谢",
+    "LLY":"礼来", "NVO":"诺和诺德", "MRNA":"Moderna", "REGN":"再生元", "VRTX":"Vertex", "UNH":"联合健康", "PFE":"辉瑞", "XBI":"生物科技ETF",
+    "SPY":"标普500ETF", "QQQ":"纳指100ETF", "DIA":"道指ETF", "IWM":"罗素2000ETF", "TQQQ":"三倍做多纳指ETF", "SQQQ":"三倍做空纳指ETF",
+    # CN
+    "600519":"贵州茅台", "000858":"五粮液", "601318":"中国平安", "600036":"招商银行", "601899":"紫金矿业", "601398":"工商银行", "600900":"长江电力", "000001":"平安银行", "000333":"美的集团", "600276":"恒瑞医药",
+    "300750":"宁德时代", "002594":"比亚迪", "601012":"隆基绿能", "002466":"天齐锂业", "002812":"恩捷股份", "600438":"通威股份", "002460":"赣锋锂业", "600418":"江淮汽车", "601127":"赛力斯",
+    "300308":"中际旭创", "002230":"科大讯飞", "300502":"新易盛", "601138":"工业富联", "002415":"海康威视", "000938":"紫光股份", "603019":"中科曙光", "688041":"海光信息", "688256":"寒武纪", "300474":"景嘉微",
+    "688981":"中芯国际", "600584":"长电科技", "002371":"北方华创", "603986":"兆易创新", "688012":"中微公司", "300604":"长川科技", "002049":"紫光国微", "688008":"澜起科技", "300782":"卓胜微", "002475":"立讯精密",
+    "300024":"机器人", "002527":"新时达", "002031":"巨轮智能", "300124":"汇川技术", "603960":"克来机电", "002747":"埃斯顿", "688017":"绿的谐波", "301029":"怡合达",
+    "002085":"万丰奥威", "600316":"洪都航空", "300424":"航新科技", "300159":"新研股份", "000099":"中信海直", "600879":"航天电子", "300900":"广联航空", "688297":"中无人机",
+    "600030":"中信证券", "601688":"华泰证券", "000776":"广发证券", "601211":"国泰君安", "600837":"海通证券", "600999":"招商证券", "300059":"东方财富", "601099":"太平洋",
+}
 
-def cn_to_yahoo(code: str) -> str:
-    s = str(code).strip().upper()
-    if not s:
-        return ""
-    if s.endswith(".SS") or s.endswith(".SZ"):
+CATALYST_TAGS: Dict[str, str] = {
+    "AI/芯片": "AI/芯片", "大型科技": "大型科技", "加密/金融科技": "加密/金融科技", "军工/太空": "军工/太空", "能源/核电": "能源/核电", "医疗/生物科技": "医疗", "ETF/指数":"ETF",
+    "A股AI/算力":"AI/算力", "A股芯片/半导体":"芯片", "A股机器人":"机器人", "A股低空经济":"低空经济", "A股证券金融":"证券金融", "A股新能源/汽车":"新能源车", "A股高成交核心":"核心资产",
+}
+
+LEVERAGED = {"SOXL", "TQQQ", "SQQQ"}
+HIGH_VOL = {"SPCX", "SMCI", "RKLB", "LUNR", "ASTS", "MSTR", "COIN", "MARA", "RIOT", "CLSK", "OKLO", "SMR"}
+
+# =========================
+# 参数和工具函数
+# =========================
+@dataclass
+class ScanConfig:
+    scope: str = "美股+A股"
+    top_sector_count: int = 5
+    target_buy: int = 10
+    target_watch: int = 20
+    min_us_dollar_vol: float = 20_000_000
+    min_cn_turnover: float = 200_000_000
+    period: str = "6mo"
+    interval: str = "1d"
+    news_weight: bool = False
+
+
+def cn_to_yf(code: str) -> str:
+    s = str(code).strip().upper().replace(".SS", "").replace(".SZ", "")
+    if not s.isdigit() or len(s) != 6:
         return s
-    if not s.isdigit():
-        return s
-    if s.startswith(("6", "9", "688")):
+    if s.startswith(("6", "9")):
         return f"{s}.SS"
     return f"{s}.SZ"
 
 
-def yahoo_to_display(ticker: str) -> str:
-    return ticker.replace(".SS", "").replace(".SZ", "")
+def base_symbol(ticker: str) -> str:
+    return ticker.upper().replace(".SS", "").replace(".SZ", "")
 
 
-# Build tags
-TAG_MAP: Dict[str, List[str]] = {}
-for pool_name, tickers in US_POOLS.items():
-    for t in tickers:
-        TAG_MAP.setdefault(t, []).append(pool_name.replace("A股", ""))
-for pool_name, codes in CN_POOLS_RAW.items():
-    for c in codes:
-        TAG_MAP.setdefault(cn_to_yahoo(c), []).append(pool_name)
-
-for t in ["TQQQ", "SQQQ", "SOXL", "SOXS", "UPRO", "SPXL", "SPXS", "TECL", "TECS", "TNA", "LABU"]:
-    TAG_MAP.setdefault(t, []).append("杠杆ETF")
-for t in ["MSTR", "COIN", "HOOD", "RIOT", "MARA", "CLSK", "IREN", "HUT", "IBIT", "ETHE"]:
-    TAG_MAP.setdefault(t, []).append("加密/金融科技")
-for t in ["SPCX", "CRCL", "RDDT", "ARM", "CAVA", "BIRK"]:
-    TAG_MAP.setdefault(t, []).append("新股/高波动")
+def is_cn_symbol(ticker: str) -> bool:
+    b = base_symbol(ticker)
+    return b.isdigit() and len(b) == 6
 
 
-# -----------------------------
-# Params and data
-# -----------------------------
-@dataclass
-class ScanParams:
-    market: str
-    period: str
-    interval: str
-    short_ma: int
-    long_ma: int
-    vol_window: int
-    min_gain_pct: float
-    vol_ratio_min: float
-    min_turnover_m: float
-    max_scan: int
-    target_buy: int
-    target_watch: int
-    include_filtered: bool
+def display_name(ticker: str) -> str:
+    return NAME_MAP.get(base_symbol(ticker), NAME_MAP.get(ticker.upper(), base_symbol(ticker)))
 
 
-@st.cache_data(show_spinner=False, ttl=60 * 20)
-def yf_batch_download(tickers_tuple: Tuple[str, ...], period: str, interval: str) -> pd.DataFrame:
-    tickers = list(tickers_tuple)
-    if not tickers:
-        return pd.DataFrame()
-    try:
-        return yf.download(
-            tickers=tickers,
-            period=period,
-            interval=interval,
-            group_by="ticker",
-            auto_adjust=True,
-            progress=False,
-            threads=True,
-        )
-    except Exception:
-        return pd.DataFrame()
+def yf_symbol(ticker: str) -> str:
+    return cn_to_yf(ticker) if is_cn_symbol(ticker) else ticker.upper()
 
 
-@st.cache_data(show_spinner=False, ttl=60 * 20)
-def yf_single_download(ticker: str, period: str, interval: str) -> pd.DataFrame:
-    try:
-        return yf.download(
-            ticker,
-            period=period,
-            interval=interval,
-            auto_adjust=True,
-            progress=False,
-            threads=False,
-        )
-    except Exception:
-        return pd.DataFrame()
+def market_of(ticker: str) -> str:
+    return "A股" if is_cn_symbol(ticker) else "美股"
 
 
-def get_ticker_frame(batch: pd.DataFrame, ticker: str, period: str, interval: str) -> pd.DataFrame:
-    def normalize(df: pd.DataFrame) -> pd.DataFrame:
-        if df is None or df.empty:
-            return pd.DataFrame()
-        out = df.copy()
-        if isinstance(out.columns, pd.MultiIndex):
-            # Try both common yfinance shapes.
-            upper = ticker.upper()
-            for level in range(out.columns.nlevels):
-                values = [str(v).upper() for v in out.columns.get_level_values(level)]
-                if upper in values:
-                    try:
-                        out = out.xs(ticker, level=level, axis=1, drop_level=True)
-                    except Exception:
-                        try:
-                            out = out.xs(upper, level=level, axis=1, drop_level=True)
-                        except Exception:
-                            pass
-                    break
-        out = out.rename(columns={c: str(c).title() for c in out.columns})
-        need = ["Open", "High", "Low", "Close", "Volume"]
-        if any(c not in out.columns for c in need):
-            return pd.DataFrame()
-        out = out[need].dropna()
-        out.index = pd.to_datetime(out.index)
-        return out
-
-    if batch is not None and not batch.empty:
-        if isinstance(batch.columns, pd.MultiIndex):
-            for level in range(batch.columns.nlevels):
-                values = [str(v).upper() for v in batch.columns.get_level_values(level)]
-                if ticker.upper() in values:
-                    try:
-                        return normalize(batch.xs(ticker, axis=1, level=level, drop_level=True))
-                    except Exception:
-                        pass
-        else:
-            one = normalize(batch)
-            if not one.empty and len(tickers_from_text(ticker)) == 1:
-                return one
-
-    return normalize(yf_single_download(ticker, period, interval))
-
-
-def add_indicators(df: pd.DataFrame, p: ScanParams) -> pd.DataFrame:
-    out = df.copy()
-    out["MA5"] = out["Close"].rolling(p.short_ma).mean()
-    out["MA20"] = out["Close"].rolling(p.long_ma).mean()
-    out["VOL_MA"] = out["Volume"].rolling(p.vol_window).mean()
-    out["RET_1D_%"] = out["Close"].pct_change() * 100
-    out["RET_5D_%"] = out["Close"].pct_change(5) * 100
-    out["VOL_RATIO"] = out["Volume"] / out["VOL_MA"]
-    out["HIGH20"] = out["Close"].rolling(20).max()
-    out["NEAR_HIGH20"] = out["Close"] / out["HIGH20"]
-    out["TURNOVER_M"] = out["Close"] * out["Volume"] / 1_000_000
-    return out
-
-
-def chinese_signal(raw: str) -> str:
-    return {
-        "LIMIT_WATCH": "涨停观察",
-        "BUY_WATCH": "买入观察",
-        "WATCH": "观察",
-        "FILTER_LOW_LIQ": "低成交过滤",
-        "NO_TRADE": "暂不交易",
-        "NO_DATA": "无数据",
-        "EXIT_RISK": "风险退出",
-        "FILTERED": "已过滤",
-    }.get(raw, raw)
-
-
-def classify(ticker: str, last: pd.Series, p: ScanParams) -> Tuple[str, int, str]:
-    ret1 = float(last.get("RET_1D_%", np.nan))
-    ret5 = float(last.get("RET_5D_%", np.nan))
-    volr = float(last.get("VOL_RATIO", np.nan))
-    close = float(last.get("Close", np.nan))
-    ma5 = float(last.get("MA5", np.nan))
-    ma20 = float(last.get("MA20", np.nan))
-    turnover_m = float(last.get("TURNOVER_M", 0.0))
-    near_high = float(last.get("NEAR_HIGH20", np.nan))
-
-    if np.isnan(close) or np.isnan(ma20) or np.isnan(volr):
-        return "NO_DATA", 0, "数据不足"
-
-    if turnover_m < p.min_turnover_m:
-        return "FILTER_LOW_LIQ", 0, f"成交额偏低：{turnover_m:.1f}M"
-
-    trend_ok = close > ma20 and ma5 > ma20
-    momentum_ok = ret1 >= p.min_gain_pct
-    volume_ok = volr >= p.vol_ratio_min
-    near_high_ok = near_high >= 0.97
-    ret5_ok = ret5 > 0
-
-    score = 0
-    score += 30 if trend_ok else 0
-    score += 25 if momentum_ok else 0
-    score += 20 if volume_ok else 0
-    score += 15 if near_high_ok else 0
-    score += 10 if ret5_ok else 0
-
-    reasons = []
-    reasons.append("趋势向上" if trend_ok else "趋势不足")
-    reasons.append("当日强" if momentum_ok else "当日涨幅不足")
-    reasons.append("放量" if volume_ok else "量能不足")
-    reasons.append("接近20日高点" if near_high_ok else "未接近高点")
-    reasons.append("5日动量正" if ret5_ok else "5日动量弱")
-
-    # A-share near-limit / strong move observation. This is a rough filter, not real limit-up board data.
-    if ticker.endswith((".SS", ".SZ")) and ret1 >= 8.5 and volume_ok and trend_ok:
-        return "LIMIT_WATCH", min(100, score + 5), " / ".join(reasons)
-
-    if score >= 80 and trend_ok and momentum_ok and volume_ok:
-        return "BUY_WATCH", score, " / ".join(reasons)
-    if score >= 55 and (trend_ok or volume_ok):
-        return "WATCH", score, " / ".join(reasons)
-    return "FILTERED", score, " / ".join(reasons)
-
-
-def tickers_from_text(raw: str) -> List[str]:
+def unique_ordered(items: List[str]) -> List[str]:
     out = []
-    for x in str(raw).replace("\n", ",").split(","):
-        s = x.strip().upper()
-        if s and s not in out:
-            out.append(s)
-    return out
-
-
-def unique(seq: Iterable[str]) -> List[str]:
-    out = []
-    for x in seq:
-        if x and x not in out:
+    for x in items:
+        if x not in out:
             out.append(x)
     return out
 
 
-def build_scan_universe(mode: str, selected_us_pools: List[str], selected_cn_pools: List[str], manual: str) -> List[str]:
-    symbols: List[str] = []
-    if mode in ["美股热门池", "美股+A股热门池"]:
-        for name in selected_us_pools:
-            symbols.extend(US_POOLS.get(name, []))
-    if mode in ["A股热门池", "美股+A股热门池"]:
-        for name in selected_cn_pools:
-            symbols.extend([cn_to_yahoo(c) for c in CN_POOLS_RAW.get(name, [])])
-    if mode == "手动输入" or manual.strip():
-        manual_tickers = tickers_from_text(manual)
-        for t in manual_tickers:
-            symbols.append(cn_to_yahoo(t) if t.isdigit() else t)
-    return unique(symbols)
+def selected_sectors(scope: str) -> Dict[str, List[str]]:
+    if scope == "美股":
+        return US_SECTORS
+    if scope == "A股":
+        return CN_SECTORS
+    merged = {}
+    merged.update(US_SECTORS)
+    merged.update(CN_SECTORS)
+    return merged
 
 
+@st.cache_data(ttl=60 * 15, show_spinner=False)
+def fetch_ohlcv(raw_ticker: str, period: str = "6mo", interval: str = "1d") -> pd.DataFrame:
+    yft = yf_symbol(raw_ticker)
+    try:
+        df = yf.download(yft, period=period, interval=interval, auto_adjust=True, progress=False, threads=False)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        if isinstance(df.columns, pd.MultiIndex):
+            # yfinance sometimes returns (Price, Ticker)
+            if yft in df.columns.get_level_values(-1):
+                df = df.xs(yft, axis=1, level=-1)
+            else:
+                df.columns = [str(c[0]) for c in df.columns]
+        df = df.rename(columns={c: str(c).title() for c in df.columns})
+        need = ["Open", "High", "Low", "Close", "Volume"]
+        if not all(c in df.columns for c in need):
+            return pd.DataFrame()
+        out = df[need].dropna().copy()
+        out.index = pd.to_datetime(out.index)
+        return out
+    except Exception:
+        return pd.DataFrame()
 
 
-def build_sector_defs(mode: str, selected_us_pools: List[str], selected_cn_pools: List[str]) -> Dict[str, List[str]]:
-    """Return selected sector pools in Yahoo ticker format."""
-    out: Dict[str, List[str]] = {}
-    if mode in ["美股热门池", "美股+A股热门池"]:
-        for name in selected_us_pools:
-            out[name] = unique(US_POOLS.get(name, []))
-    if mode in ["A股热门池", "美股+A股热门池"]:
-        for name in selected_cn_pools:
-            out[name] = unique([cn_to_yahoo(c) for c in CN_POOLS_RAW.get(name, [])])
+def add_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["MA5"] = out["Close"].rolling(5).mean()
+    out["MA20"] = out["Close"].rolling(20).mean()
+    out["RET1"] = out["Close"].pct_change()
+    out["RET5"] = out["Close"].pct_change(5)
+    out["VOL_MA20"] = out["Volume"].rolling(20).mean()
+    out["VOL_RATIO"] = out["Volume"] / out["VOL_MA20"]
+    out["HIGH20"] = out["Close"].rolling(20).max()
+    out["NEAR_HIGH20"] = out["Close"] / out["HIGH20"]
+    out["TURNOVER"] = out["Close"] * out["Volume"]
     return out
 
 
-def rank_strong_sectors(sector_defs: Dict[str, List[str]], p: ScanParams) -> Tuple[pd.DataFrame, Dict[str, List[str]]]:
-    """消闲派式板块强度：先看联动，再看放量，再看龙头。"""
-    rows: List[dict] = []
-    leader_map: Dict[str, List[str]] = {}
-
-    for sector, tickers in sector_defs.items():
-        tickers = unique(tickers)
-        if not tickers:
-            continue
-        batch = yf_batch_download(tuple(tickers), p.period, p.interval)
-        stock_rows = []
-        for ticker in tickers:
-            df = get_ticker_frame(batch, ticker, p.period, p.interval)
-            if df.empty or len(df) < max(p.long_ma, p.vol_window) + 5:
-                continue
-            ind = add_indicators(df, p).dropna()
-            if ind.empty:
-                continue
-            last = ind.iloc[-1]
-            try:
-                ret1 = float(last["RET_1D_%"])
-                ret5 = float(last["RET_5D_%"])
-                volr = float(last["VOL_RATIO"])
-                close = float(last["Close"])
-                ma5 = float(last["MA5"])
-                ma20 = float(last["MA20"])
-                near_high = float(last["NEAR_HIGH20"])
-                turnover_m = float(last["TURNOVER_M"])
-            except Exception:
-                continue
-            if np.isnan(ret1) or np.isnan(volr) or np.isnan(close) or np.isnan(ma20):
-                continue
-            trend_ok = close > ma20 and ma5 > ma20
-            strong_ok = trend_ok and ret1 >= p.min_gain_pct and volr >= p.vol_ratio_min
-            volume_ok = volr >= p.vol_ratio_min
-            near_high_ok = near_high >= 0.97
-            limit_like = ret1 >= 8.5 if ticker.endswith((".SS", ".SZ")) else ret1 >= 6.0
-            stock_score = 0
-            stock_score += 35 if strong_ok else 0
-            stock_score += 25 if volume_ok else 0
-            stock_score += 20 if near_high_ok else 0
-            stock_score += max(0, min(ret1, 12)) * 2
-            stock_score += max(0, min(ret5, 20)) * 0.8
-            stock_score += min(max(turnover_m / max(p.min_turnover_m, 1), 0), 5) * 3
-            stock_rows.append({
-                "ticker": ticker,
-                "display": yahoo_to_display(ticker),
-                "ret1": ret1,
-                "ret5": ret5,
-                "volr": volr,
-                "turnover_m": turnover_m,
-                "trend_ok": trend_ok,
-                "strong_ok": strong_ok,
-                "volume_ok": volume_ok,
-                "near_high_ok": near_high_ok,
-                "limit_like": limit_like,
-                "stock_score": stock_score,
-            })
-
-        n = len(stock_rows)
-        if n == 0:
-            rows.append({
-                "板块": sector, "强度分": 0, "有效股票数": 0, "上涨率%": 0,
-                "强势股数": 0, "放量股数": 0, "近高股数": 0, "涨停/大阳数": 0,
-                "平均涨幅%": None, "TOP3涨幅%": None, "龙头候选": "无数据", "龙头涨幅%": None,
-                "龙头放量": None, "板块结论": "无数据",
-            })
-            leader_map[sector] = []
-            continue
-
-        rets = [r["ret1"] for r in stock_rows]
-        up_count = sum(1 for r in stock_rows if r["ret1"] > 0)
-        strong_count = sum(1 for r in stock_rows if r["strong_ok"])
-        vol_count = sum(1 for r in stock_rows if r["volume_ok"])
-        high_count = sum(1 for r in stock_rows if r["near_high_ok"])
-        limit_count = sum(1 for r in stock_rows if r["limit_like"])
-        avg_ret = float(np.mean(rets))
-        top3_ret = float(np.mean(sorted(rets, reverse=True)[: min(3, n)]))
-
-        up_rate = up_count / n
-        strong_rate = strong_count / n
-        vol_rate = vol_count / n
-        high_rate = high_count / n
-        limit_rate = limit_count / n
-        raw_score = (
-            25 * up_rate
-            + 30 * strong_rate
-            + 20 * vol_rate
-            + 15 * high_rate
-            + 15 * limit_rate
-            + max(0, min(top3_ret, 12)) * 1.8
-            + max(0, min(avg_ret, 8)) * 1.2
-        )
-        score = round(min(100, raw_score), 1)
-
-        ranked_stocks = sorted(stock_rows, key=lambda x: (x["strong_ok"], x["stock_score"], x["ret1"], x["volr"]), reverse=True)
-        leaders = ranked_stocks[:5]
-        leader_map[sector] = [x["ticker"] for x in ranked_stocks]
-        leader_text = ", ".join([f"{x['display']}({x['ret1']:.1f}%)" for x in leaders[:3]])
-        top = leaders[0]
-
-        if score >= 65 and strong_count >= 2:
-            verdict = "强板块：优先找龙头"
-        elif score >= 45 and (strong_count >= 1 or vol_count >= 2):
-            verdict = "可观察：等确认"
-        else:
-            verdict = "弱板块：先过滤"
-
-        rows.append({
-            "板块": sector,
-            "强度分": score,
-            "有效股票数": n,
-            "上涨率%": round(up_rate * 100, 1),
-            "强势股数": strong_count,
-            "放量股数": vol_count,
-            "近高股数": high_count,
-            "涨停/大阳数": limit_count,
-            "平均涨幅%": round(avg_ret, 2),
-            "TOP3涨幅%": round(top3_ret, 2),
-            "龙头候选": leader_text,
-            "龙头涨幅%": round(top["ret1"], 2),
-            "龙头放量": round(top["volr"], 2),
-            "板块结论": verdict,
-        })
-
-    sector_df = pd.DataFrame(rows)
-    if not sector_df.empty:
-        sector_df = sector_df.sort_values(["强度分", "强势股数", "TOP3涨幅%"], ascending=[False, False, False]).reset_index(drop=True)
-    return sector_df, leader_map
+def signal_cn(sig: str) -> str:
+    mp = {
+        "BUY": "买入观察", "WATCH": "观察", "WEAK": "弱观察", "FILTER": "已过滤", "RISK": "风险退出", "NODATA": "无数据", "LOWLIQ": "低成交过滤", "LIMIT": "涨停观察"
+    }
+    return mp.get(sig, sig)
 
 
-def build_sector_ordered_universe(sector_df: pd.DataFrame, leader_map: Dict[str, List[str]], sector_defs: Dict[str, List[str]], top_sector_limit: int, manual: str) -> List[str]:
-    """先扫最强板块的龙头，再扫同板块其余票，最后才扫弱板块。"""
-    ordered: List[str] = []
-    if sector_df is not None and not sector_df.empty:
-        strong_sectors = list(sector_df.head(int(top_sector_limit))["板块"])
-        remaining_sectors = [s for s in list(sector_df["板块"]) if s not in strong_sectors]
-        for sector in strong_sectors + remaining_sectors:
-            ordered.extend(leader_map.get(sector, []))
-            ordered.extend(sector_defs.get(sector, []))
+def score_stock(ticker: str, sector: str, cfg: ScanConfig) -> Dict:
+    df = fetch_ohlcv(ticker, cfg.period, cfg.interval)
+    b = base_symbol(ticker)
+    mkt = market_of(ticker)
+    if df.empty or len(df) < 25:
+        return {"代码": b, "名称": display_name(ticker), "市场": mkt, "板块": sector, "信号": "无数据", "分数": 0, "现价": np.nan, "涨跌幅%": np.nan, "量比": np.nan, "成交额": np.nan, "标签": CATALYST_TAGS.get(sector, ""), "原因": "数据不足或数据源暂不可用", "raw_signal":"NODATA"}
+    md = add_metrics(df).dropna()
+    if md.empty:
+        return {"代码": b, "名称": display_name(ticker), "市场": mkt, "板块": sector, "信号": "无数据", "分数": 0, "现价": np.nan, "涨跌幅%": np.nan, "量比": np.nan, "成交额": np.nan, "标签": CATALYST_TAGS.get(sector, ""), "原因": "指标计算数据不足", "raw_signal":"NODATA"}
+    last = md.iloc[-1]
+    close = float(last["Close"])
+    ret1 = float(last["RET1"] * 100)
+    ret5 = float(last["RET5"] * 100) if not math.isnan(float(last["RET5"])) else 0.0
+    vr = float(last["VOL_RATIO"]) if not math.isnan(float(last["VOL_RATIO"])) else 0.0
+    turnover = float(last["TURNOVER"])
+    trend = close > float(last["MA20"]) and float(last["MA5"]) >= float(last["MA20"])
+    near_high = float(last["NEAR_HIGH20"]) >= 0.97
+    strong_day = ret1 >= (9.2 if mkt == "A股" else 3.0)
+    big_up = ret1 >= (5.0 if mkt == "A股" else 2.0)
+    liquid = turnover >= (cfg.min_cn_turnover if mkt == "A股" else cfg.min_us_dollar_vol)
+
+    score = 0
+    reasons = []
+    if liquid:
+        score += 15; reasons.append("成交额达标")
     else:
-        for symbols in sector_defs.values():
-            ordered.extend(symbols)
+        reasons.append("成交额偏低")
+    if trend:
+        score += 22; reasons.append("趋势在20日线之上")
+    else:
+        reasons.append("趋势未确认")
+    if big_up:
+        score += 18; reasons.append("涨幅有强度")
+    if vr >= 1.5:
+        score += 18; reasons.append("明显放量")
+    elif vr >= 1.15:
+        score += 9; reasons.append("温和放量")
+    if near_high:
+        score += 15; reasons.append("接近20日新高")
+    if ret5 > 5:
+        score += 8; reasons.append("5日动量强")
+    if strong_day:
+        score += 15; reasons.append("大阳/近涨停强度")
+    if b in LEVERAGED:
+        score -= 8; reasons.append("杠杆ETF，风险加倍")
+    if b in HIGH_VOL:
+        score -= 5; reasons.append("高波动标的，谨慎追高")
+    if ret1 < -2:
+        score -= 20; reasons.append("当日走弱")
+    if not liquid:
+        raw = "LOWLIQ"
+    elif mkt == "A股" and strong_day and score >= 75:
+        raw = "LIMIT"
+    elif score >= 85:
+        raw = "BUY"
+    elif score >= 70:
+        raw = "WATCH"
+    elif score >= 55:
+        raw = "WEAK"
+    else:
+        raw = "FILTER"
+    return {
+        "代码": b,
+        "名称": display_name(ticker),
+        "市场": mkt,
+        "板块": sector,
+        "信号": signal_cn(raw),
+        "分数": int(max(0, min(100, score))),
+        "现价": round(close, 3),
+        "涨跌幅%": round(ret1, 2),
+        "5日涨幅%": round(ret5, 2),
+        "量比": round(vr, 2),
+        "成交额": round(turnover, 0),
+        "标签": tag_for(b, sector),
+        "原因": "；".join(reasons[:5]),
+        "raw_signal": raw,
+    }
 
+
+def tag_for(symbol: str, sector: str) -> str:
+    tags = [CATALYST_TAGS.get(sector, sector)]
+    if symbol in LEVERAGED:
+        tags.append("杠杆ETF")
+    if symbol in HIGH_VOL:
+        tags.append("高波动")
+    if symbol in {"SPCX", "RKLB", "LUNR", "ASTS"}:
+        tags.append("太空")
+    return " / ".join(unique_ordered([t for t in tags if t]))
+
+
+def score_sector(sector: str, tickers: List[str], cfg: ScanConfig) -> Tuple[Dict, pd.DataFrame]:
+    rows = [score_stock(t, sector, cfg) for t in tickers]
+    df = pd.DataFrame(rows)
+    valid = df[~df["信号"].isin(["无数据"])]
+    if valid.empty:
+        return {"板块": sector, "强度分": 0, "上涨率%": 0, "强势数": 0, "放量数": 0, "前排": "无", "成员数": len(tickers), "标签": CATALYST_TAGS.get(sector, "")}, df
+    up_rate = (valid["涨跌幅%"] > 0).mean() * 100
+    strong_count = valid[valid["分数"] >= 70].shape[0]
+    vol_count = valid[valid["量比"] >= 1.5].shape[0]
+    top3 = valid.sort_values("涨跌幅%", ascending=False).head(3)
+    top3_ret = top3["涨跌幅%"].mean() if not top3.empty else 0
+    avg_score = valid["分数"].mean()
+    sector_score = min(100, max(0, avg_score * .45 + up_rate * .20 + strong_count * 8 + vol_count * 5 + top3_ret * 2))
+    return {
+        "板块": sector,
+        "强度分": int(round(sector_score)),
+        "上涨率%": round(up_rate, 1),
+        "强势数": int(strong_count),
+        "放量数": int(vol_count),
+        "前排": "、".join([f"{r['名称']}({r['代码']})" for _, r in top3.iterrows()]),
+        "成员数": len(tickers),
+        "标签": CATALYST_TAGS.get(sector, ""),
+    }, df
+
+
+def run_scan(cfg: ScanConfig, manual: str = "") -> Tuple[pd.DataFrame, pd.DataFrame]:
+    sectors = selected_sectors(cfg.scope)
+    # manual added into a synthetic sector, but won't drive sector-first logic too hard
+    manual_list = []
     if manual.strip():
-        for t in tickers_from_text(manual):
-            ordered.append(cn_to_yahoo(t) if t.isdigit() else t)
-    return unique(ordered)
+        manual_list = [x.strip().upper() for x in manual.replace("\n", ",").split(",") if x.strip()]
+        sectors = {**sectors, "手动追加": manual_list}
 
-def scan_universe(symbols: List[str], p: ScanParams) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, List[str]]:
-    scanned_rows = []
-    buy_rows = []
-    watch_rows = []
-    filtered_rows = []
-    rounds_log = []
+    sector_rows = []
+    all_stock_frames = []
+    progress = st.progress(0, text="正在扫描板块强度...")
+    total = max(1, len(sectors))
+    for i, (sec, ticks) in enumerate(sectors.items(), 1):
+        progress.progress(i / total, text=f"正在扫描板块：{sec}")
+        srow, sdf = score_sector(sec, ticks, cfg)
+        sector_rows.append(srow)
+        all_stock_frames.append(sdf)
+    progress.empty()
+    sector_df = pd.DataFrame(sector_rows).sort_values("强度分", ascending=False).reset_index(drop=True)
+    top_secs = sector_df.head(cfg.top_sector_count)["板块"].tolist()
 
-    symbols = unique(symbols)[: p.max_scan]
-    batch_size = 25
-
-    for start in range(0, len(symbols), batch_size):
-        chunk = symbols[start : start + batch_size]
-        rounds_log.append(f"第 {start // batch_size + 1} 轮：扫描 {len(chunk)} 只，累计已找到 买入观察 {len(buy_rows)} / {p.target_buy}，观察 {len(watch_rows)} / {p.target_watch}")
-
-        batch = yf_batch_download(tuple(chunk), p.period, p.interval)
-        for ticker in chunk:
-            df = get_ticker_frame(batch, ticker, p.period, p.interval)
-            if df.empty or len(df) < max(p.long_ma, p.vol_window) + 5:
-                row = {
-                    "代码": yahoo_to_display(ticker),
-                    "信号": "无数据",
-                    "评分": 0,
-                    "收盘价": None,
-                    "当日涨幅%": None,
-                    "5日涨幅%": None,
-                    "放量倍数": None,
-                    "成交额M": None,
-                    "标签": " / ".join(TAG_MAP.get(ticker, [])),
-                    "原因": "数据不足或数据源暂不可用",
-                }
-                filtered_rows.append(row)
-                scanned_rows.append(row)
-                continue
-
-            ind = add_indicators(df, p).dropna()
-            if ind.empty:
-                row = {
-                    "代码": yahoo_to_display(ticker),
-                    "信号": "无数据",
-                    "评分": 0,
-                    "收盘价": None,
-                    "当日涨幅%": None,
-                    "5日涨幅%": None,
-                    "放量倍数": None,
-                    "成交额M": None,
-                    "标签": " / ".join(TAG_MAP.get(ticker, [])),
-                    "原因": "指标计算数据不足",
-                }
-                filtered_rows.append(row)
-                scanned_rows.append(row)
-                continue
-
-            last = ind.iloc[-1]
-            raw_signal, score, reason = classify(ticker, last, p)
-            signal_cn = chinese_signal(raw_signal)
-            row = {
-                "代码": yahoo_to_display(ticker),
-                "信号": signal_cn,
-                "评分": int(score),
-                "收盘价": round(float(last["Close"]), 2),
-                "当日涨幅%": round(float(last["RET_1D_%"]), 2),
-                "5日涨幅%": round(float(last["RET_5D_%"]), 2),
-                "放量倍数": round(float(last["VOL_RATIO"]), 2),
-                "成交额M": round(float(last["TURNOVER_M"]), 1),
-                "标签": " / ".join(unique(TAG_MAP.get(ticker, []))),
-                "原因": reason,
-            }
-            scanned_rows.append(row)
-            if raw_signal in ["BUY_WATCH", "LIMIT_WATCH"]:
-                buy_rows.append(row)
-            elif raw_signal == "WATCH":
-                watch_rows.append(row)
-            else:
-                filtered_rows.append(row)
-
-        if len(buy_rows) >= p.target_buy and len(watch_rows) >= p.target_watch:
-            rounds_log.append("目标已达到：停止继续扫描，避免无意义扩大范围。")
-            break
-
-    def sort_df(rows: List[dict]) -> pd.DataFrame:
-        df = pd.DataFrame(rows)
-        if df.empty:
-            return df
-        order = {"涨停观察": 0, "买入观察": 1, "观察": 2, "风险退出": 3, "暂不交易": 4, "低成交过滤": 5, "已过滤": 6, "无数据": 7}
-        df["_order"] = df["信号"].map(order).fillna(9)
-        df = df.sort_values(["_order", "评分", "当日涨幅%", "放量倍数"], ascending=[True, False, False, False]).drop(columns=["_order"])
-        return df.reset_index(drop=True)
-
-    buy_df = sort_df(buy_rows).head(p.target_buy)
-    watch_df = sort_df(watch_rows).head(p.target_watch)
-    filtered_df = sort_df(filtered_rows)
-    all_df = sort_df(scanned_rows)
-    return buy_df, watch_df, filtered_df, rounds_log, all_df
+    stock_df = pd.concat(all_stock_frames, ignore_index=True) if all_stock_frames else pd.DataFrame()
+    if stock_df.empty:
+        return sector_df, stock_df
+    stock_df["是否热门板块"] = stock_df["板块"].isin(top_secs)
+    # only promote hot-sector names; keep all rows for review
+    stock_df["排序"] = stock_df["是否热门板块"].astype(int) * 1000 + stock_df["分数"].fillna(0) + stock_df["涨跌幅%"].fillna(0)
+    stock_df = stock_df.sort_values("排序", ascending=False).drop(columns=["排序"]).reset_index(drop=True)
+    # de-duplicate tickers by best score
+    stock_df = stock_df.sort_values(["代码", "分数"], ascending=[True, False]).drop_duplicates("代码", keep="first")
+    stock_df = stock_df.sort_values(["是否热门板块", "分数", "涨跌幅%"], ascending=[False, False, False]).reset_index(drop=True)
+    return sector_df, stock_df
 
 
-# -----------------------------
-# UI helpers
-# -----------------------------
-def render_hero() -> None:
-    st.markdown(
-        """
-        <div class="apple-hero">
-          <div class="hero-kicker">Sector first · Momentum funnel · Mobile ready</div>
-          <div class="hero-title">消闲派思维选股器</div>
-          <div class="hero-sub">
-            先找最强板块，再找龙头候选。弱板块自动靠后，低成交和无效信号自动过滤，最终只输出“买入观察”和“观察名单”。
-          </div>
-          <div class="hero-pills">
-            <span class="pill">🔥 最强板块排序</span>
-            <span class="pill">🎯 10只买入观察</span>
-            <span class="pill">👀 20只观察名单</span>
-            <span class="pill">🧹 自动过滤垃圾票</span>
-            <span class="pill">📱 iPhone 优化</span>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def fmt_turnover(v):
+    if pd.isna(v):
+        return "--"
+    v = float(v)
+    if v >= 1e9:
+        return f"{v/1e9:.1f}亿"
+    if v >= 1e8:
+        return f"{v/1e8:.1f}亿"
+    if v >= 1e6:
+        return f"{v/1e6:.1f}百万"
+    return f"{v:.0f}"
 
 
-def metric_card(label: str, value: str, note: str = "") -> str:
-    return f"""
-    <div class="mini-card">
-      <div class="mini-label">{label}</div>
-      <div class="mini-value">{value}</div>
-      <div class="mini-note">{note}</div>
-    </div>
-    """
-
-
-def render_rank_cards(sector_df: pd.DataFrame) -> None:
-    if sector_df is None or sector_df.empty:
+def render_list(df: pd.DataFrame, max_rows: int = 30):
+    if df.empty:
+        st.info("没有符合条件的股票。市场不给机会时，空仓是正确动作。")
         return
-    top = sector_df.head(3).reset_index(drop=True)
-    cols = st.columns(len(top))
-    for i, (_, row) in enumerate(top.iterrows()):
-        with cols[i]:
-            st.markdown(
-                f"""
-                <div class="rank-card">
-                  <div class="rank-num">NO.{i+1} · 最强板块</div>
-                  <div class="rank-name">{row.get('板块', '-')}</div>
-                  <div class="rank-score">{row.get('强度分', 0)}</div>
-                  <div class="rank-note">龙头：{row.get('龙头候选', '无')}<br/>结论：{row.get('板块结论', '-')}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-
-def render_result_summary(buy_df: pd.DataFrame, watch_df: pd.DataFrame, all_df: pd.DataFrame) -> None:
-    cols = st.columns(3)
-    with cols[0]:
-        st.markdown(metric_card("买入观察", f"{len(buy_df)} 只", "只代表进入重点盯盘池，不是下单命令"), unsafe_allow_html=True)
-    with cols[1]:
-        st.markdown(metric_card("观察名单", f"{len(watch_df)} 只", "有强度但还没到最佳状态"), unsafe_allow_html=True)
-    with cols[2]:
-        st.markdown(metric_card("实际扫描", f"{len(all_df)} 只", "已按板块强弱和个股强度排序"), unsafe_allow_html=True)
-
-
-# -----------------------------
-# UI
-# -----------------------------
-render_hero()
-
-with st.sidebar:
-    st.markdown("### ⚙️ 扫描控制台")
-    mode = st.selectbox("扫描范围", ["美股热门池", "A股热门池", "美股+A股热门池", "手动输入"], index=0)
-
-    selected_us = []
-    selected_cn = []
-    if mode in ["美股热门池", "美股+A股热门池"]:
-        selected_us = st.multiselect("美股板块池", list(US_POOLS.keys()), default=["AI/芯片", "大型科技", "加密/金融科技"])
-    if mode in ["A股热门池", "美股+A股热门池"]:
-        selected_cn = st.multiselect("A股板块池", list(CN_POOLS_RAW.keys()), default=["A股AI/算力", "A股芯片/半导体", "A股高成交核心"])
-
-    manual = st.text_area("手动追加代码", value="", height=72, placeholder="例如：SPCX, NVDA, 600519, 300750")
-
-    st.markdown("### 🎯 输出目标")
-    target_buy = st.number_input("买入观察数量", min_value=1, max_value=30, value=10, step=1)
-    target_watch = st.number_input("观察数量", min_value=1, max_value=60, value=20, step=1)
-    max_scan = st.number_input("最多扫描股票数", min_value=20, max_value=300, value=160, step=10)
-
-    st.markdown("### 🔥 板块优先")
-    use_sector_first = st.checkbox("先找最强板块，再找龙头", value=True)
-    top_sector_limit = st.number_input("优先扫描最强板块数", min_value=1, max_value=10, value=3, step=1)
-
-    st.markdown("### 🧹 过滤参数")
-    period = st.selectbox("历史周期", ["3mo", "6mo", "1y"], index=1)
-    interval = "1d"
-    short_ma = st.number_input("短均线", min_value=2, max_value=30, value=5, step=1)
-    long_ma = st.number_input("长均线", min_value=10, max_value=120, value=20, step=1)
-    min_gain = st.number_input("最小当日涨幅%", min_value=0.0, max_value=20.0, value=2.0, step=0.5)
-    vol_ratio = st.number_input("最小放量倍数", min_value=1.0, max_value=10.0, value=1.5, step=0.1)
-    min_turnover = st.number_input("最低成交额M", min_value=0.0, max_value=5000.0, value=50.0, step=10.0)
-    include_filtered = st.checkbox("显示已过滤股票", value=False)
-
-params = ScanParams(
-    market=mode,
-    period=period,
-    interval=interval,
-    short_ma=int(short_ma),
-    long_ma=int(long_ma),
-    vol_window=20,
-    min_gain_pct=float(min_gain),
-    vol_ratio_min=float(vol_ratio),
-    min_turnover_m=float(min_turnover),
-    max_scan=int(max_scan),
-    target_buy=int(target_buy),
-    target_watch=int(target_watch),
-    include_filtered=bool(include_filtered),
-)
-
-sector_defs = build_sector_defs(mode, selected_us, selected_cn)
-base_symbols = build_scan_universe(mode, selected_us, selected_cn, manual)
-
-st.markdown("<div class='section-title'>今日扫描任务</div>", unsafe_allow_html=True)
-col_a, col_b, col_c = st.columns(3)
-with col_a:
-    st.markdown(metric_card("候选池", f"{len(base_symbols)} 只", "来自你选择的板块池和手动追加"), unsafe_allow_html=True)
-with col_b:
-    st.markdown(metric_card("目标买入观察", f"{target_buy} 只", "强趋势 + 强动量 + 强放量"), unsafe_allow_html=True)
-with col_c:
-    st.markdown(metric_card("目标观察", f"{target_watch} 只", "有潜力，但还要继续确认"), unsafe_allow_html=True)
-
-st.markdown(
-    "<div class='small-note'>严肃提醒：这里的“买入观察”不是下单命令。它只是告诉你：这只票值得放进第二天盯盘池。真正交易还要看大盘、新闻、盘中承接、止损位置。</div>",
-    unsafe_allow_html=True,
-)
-
-run_scan = st.button("🚀 开始智能漏斗扫描", type="primary")
-
-if run_scan:
-    if not base_symbols:
-        st.error("候选池为空。请选择板块池或手动输入股票代码。")
-    else:
-        sector_df = pd.DataFrame()
-        leader_map: Dict[str, List[str]] = {}
-        symbols = base_symbols
-
-        with st.spinner("第一步：正在按消闲派思路给板块排序。先找最强方向，不在弱板块里浪费子弹..."):
-            if use_sector_first and mode != "手动输入" and sector_defs:
-                sector_df, leader_map = rank_strong_sectors(sector_defs, params)
-                symbols = build_sector_ordered_universe(sector_df, leader_map, sector_defs, int(top_sector_limit), manual)
-
-        with st.spinner("第二步：按板块强弱顺序漏斗扫描。弱票自动过滤，继续寻找下一批候选..."):
-            buy_df, watch_df, filtered_df, rounds_log, all_df = scan_universe(symbols, params)
-
-        render_result_summary(buy_df, watch_df, all_df)
-
-        tabs = st.tabs(["🔥 最强板块", "✅ 买入观察", "👀 观察名单", "🧭 扫描过程", "📊 全部结果"])
-
-        with tabs[0]:
-            if use_sector_first and mode != "手动输入" and not sector_df.empty:
-                top_sector_name = str(sector_df.iloc[0]["板块"])
-                st.markdown("<div class='section-title'>最强板块排行榜</div>", unsafe_allow_html=True)
-                render_rank_cards(sector_df)
-                st.success(f"当前最强板块：{top_sector_name}。优先从这个方向找龙头，不在弱板块里找奇迹。")
-                st.dataframe(sector_df, use_container_width=True, hide_index=True)
-            elif use_sector_first and mode != "手动输入":
-                st.warning("板块排序没有拿到足够数据，已退回普通漏斗扫描。")
-            else:
-                st.info("手动输入模式下不做板块排行榜。")
-
-        with tabs[1]:
-            st.markdown("<div class='section-title'>今日买入观察名单</div>", unsafe_allow_html=True)
-            st.markdown("<div class='section-caption'>这张表是今天最重要的输出。没有票，就不要硬做。</div>", unsafe_allow_html=True)
-            if buy_df.empty:
-                st.warning("没有找到满足条件的买入观察股票。今天不要硬做。")
-            else:
-                st.dataframe(buy_df, use_container_width=True, hide_index=True)
-                st.download_button("下载买入观察名单 CSV", buy_df.to_csv(index=False).encode("utf-8-sig"), "buy_watch.csv", "text/csv")
-
-        with tabs[2]:
-            st.markdown("<div class='section-title'>今日观察名单</div>", unsafe_allow_html=True)
-            st.markdown("<div class='section-caption'>这些是备选，不是立刻买。明天继续看是否转强。</div>", unsafe_allow_html=True)
-            if watch_df.empty:
-                st.info("没有观察名单。")
-            else:
-                st.dataframe(watch_df, use_container_width=True, hide_index=True)
-                st.download_button("下载观察名单 CSV", watch_df.to_csv(index=False).encode("utf-8-sig"), "watch_list.csv", "text/csv")
-
-        with tabs[3]:
-            st.markdown("<div class='section-title'>扫描过程</div>", unsafe_allow_html=True)
-            for line in rounds_log:
-                st.write("- " + line)
-            if include_filtered:
-                st.markdown("<div class='section-title'>已过滤股票</div>", unsafe_allow_html=True)
-                st.dataframe(filtered_df, use_container_width=True, hide_index=True)
-
-        with tabs[4]:
-            st.markdown("<div class='section-title'>全部扫描结果</div>", unsafe_allow_html=True)
-            st.dataframe(all_df, use_container_width=True, hide_index=True)
-            st.download_button("下载全部结果 CSV", all_df.to_csv(index=False).encode("utf-8-sig"), "all_scan_results.csv", "text/csv")
-
-else:
-    st.markdown(
-        """
-        <div class="glass-panel">
-          <div class="section-title" style="margin-top:0">使用逻辑</div>
-          <div class="small-note">
-            1）先选市场和板块池；2）点击“开始智能漏斗扫描”；3）先看“最强板块”，再看“买入观察”；4）没有买入观察就空仓，不要为了交易而交易。
-            <br/><br/>
-            核心原则：短线资金只认最强方向。弱板块里的股票，即使看起来便宜，也先放弃。
+    html = ['<div class="list-card">']
+    for _, r in df.head(max_rows).iterrows():
+        chg = r.get("涨跌幅%", np.nan)
+        chg_cls = "chg-pos" if pd.notna(chg) and chg >= 0 else "chg-neg"
+        raw = r.get("raw_signal", "")
+        pill = "pill-buy" if raw in ["BUY"] else "pill-watch" if raw in ["WATCH", "WEAK"] else "pill-limit" if raw == "LIMIT" else "pill-risk"
+        sym = str(r.get("代码", "--"))
+        logo = sym[:2] if not sym[:2].isdigit() else sym[-2:]
+        html.append(f'''
+        <div class="row-card">
+          <div class="logo-dot">{logo}</div>
+          <div>
+            <div class="sym">{sym} <span class="signal-pill {pill}">{r.get('信号','')}</span></div>
+            <div class="name">{r.get('名称','')} · {r.get('板块','')} · {r.get('标签','')}</div>
+          </div>
+          <div class="price">
+            <div>{r.get('现价','--')}</div>
+            <div class="{chg_cls}">{chg:+.2f}%</div>
           </div>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+        ''')
+    html.append('</div>')
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+
+def render_sector_cards(sector_df: pd.DataFrame):
+    if sector_df.empty:
+        st.info("没有板块数据。")
+        return
+    html = ['<div class="sector-grid">']
+    for _, r in sector_df.head(8).iterrows():
+        html.append(f'''
+        <div class="sector-card">
+          <div class="sector-name">🔥 {r['板块']}</div>
+          <div class="sector-score">{int(r['强度分'])}</div>
+          <div class="muted">上涨率 {r['上涨率%']}% · 强势 {r['强势数']} · 放量 {r['放量数']}</div>
+          <div class="muted" style="margin-top:.35rem; font-size:.82rem;">前排：{r['前排']}</div>
+        </div>
+        ''')
+    html.append('</div>')
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+
+def plot_kline(ticker: str, period="6mo"):
+    df = fetch_ohlcv(ticker, period=period, interval="1d")
+    if df.empty:
+        st.warning("该股票K线数据暂时读取失败。")
+        return
+    md = add_metrics(df)
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(x=md.index, open=md["Open"], high=md["High"], low=md["Low"], close=md["Close"], name="K线"))
+    fig.add_trace(go.Scatter(x=md.index, y=md["MA5"], mode="lines", name="5日均线", line=dict(width=1.4)))
+    fig.add_trace(go.Scatter(x=md.index, y=md["MA20"], mode="lines", name="20日均线", line=dict(width=1.4)))
+    fig.update_layout(height=430, margin=dict(l=10, r=10, t=20, b=10), xaxis_rangeslider_visible=False, template="plotly_white")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# =========================
+# UI - 控制台
+# =========================
+with st.sidebar:
+    st.markdown("### ⚙️ 扫描设置")
+    scope = st.selectbox("市场范围", ["美股+A股", "美股", "A股"], index=0)
+    top_sector_count = st.slider("自动选择最强板块数", 2, 8, 5)
+    target_buy = st.slider("买入观察最多显示", 3, 15, 10)
+    target_watch = st.slider("观察名单最多显示", 5, 30, 20)
+    st.markdown("### 🧹 过滤条件")
+    min_us = st.number_input("美股最低成交额/美元", min_value=1_000_000, max_value=500_000_000, value=20_000_000, step=5_000_000)
+    min_cn = st.number_input("A股最低成交额/人民币", min_value=10_000_000, max_value=2_000_000_000, value=200_000_000, step=50_000_000)
+    manual = st.text_area("手动追加代码（可空）", placeholder="例如：SPCX, NVDA, 600519, 300750", height=86)
+    st.caption("龙虎榜、实时盘前榜、新闻催化需要专业数据源。本版本先用行情强度做漏斗筛选。")
+
+cfg = ScanConfig(scope=scope, top_sector_count=top_sector_count, target_buy=target_buy, target_watch=target_watch, min_us_dollar_vol=float(min_us), min_cn_turnover=float(min_cn))
+
+st.markdown('''
+<div class="tv-topbar">
+  <div class="tv-title">短线情绪板块选股器</div>
+  <div class="tv-subtitle">先找最强板块 → 再找前排个股 → 自动过滤低质量机会</div>
+</div>
+''', unsafe_allow_html=True)
+
+col_a, col_b = st.columns([1, 1])
+with col_a:
+    run_btn = st.button("开始扫描热门板块和前排股票", type="primary", use_container_width=True)
+with col_b:
+    clear_btn = st.button("清除本次结果", use_container_width=True)
+if clear_btn:
+    st.session_state.pop("sector_df", None)
+    st.session_state.pop("stock_df", None)
+
+if run_btn or ("sector_df" not in st.session_state):
+    if run_btn:
+        with st.spinner("正在执行：板块强度扫描 → 热门板块建池 → 个股漏斗筛选..."):
+            sector_df, stock_df = run_scan(cfg, manual=manual)
+            st.session_state["sector_df"] = sector_df
+            st.session_state["stock_df"] = stock_df
+    else:
+        st.info("点击上方按钮开始扫描。")
+
+sector_df = st.session_state.get("sector_df", pd.DataFrame())
+stock_df = st.session_state.get("stock_df", pd.DataFrame())
+
+# KPI
+if not stock_df.empty:
+    hot_count = int(stock_df["是否热门板块"].sum())
+    buy_df = stock_df[(stock_df["是否热门板块"]) & (stock_df["raw_signal"].isin(["BUY", "LIMIT"]))].head(target_buy)
+    watch_df = stock_df[(stock_df["是否热门板块"]) & (stock_df["raw_signal"].isin(["WATCH", "WEAK"]))].head(target_watch)
+    mood_score = int(sector_df["强度分"].head(3).mean()) if not sector_df.empty else 0
+    mood = "强" if mood_score >= 75 else "中" if mood_score >= 58 else "弱"
+else:
+    hot_count = 0; buy_df = pd.DataFrame(); watch_df = pd.DataFrame(); mood_score=0; mood="等待扫描"
+
+st.markdown(f'''
+<div class="kpi-grid">
+  <div class="kpi-card"><div class="kpi-label">短线温度</div><div class="kpi-value">{mood}</div><div class="kpi-note">板块均分 {mood_score}</div></div>
+  <div class="kpi-card"><div class="kpi-label">热门板块股票</div><div class="kpi-value">{hot_count}</div><div class="kpi-note">只在强板块里找前排</div></div>
+  <div class="kpi-card"><div class="kpi-label">买入观察</div><div class="kpi-value">{len(buy_df)}</div><div class="kpi-note">不是下单命令</div></div>
+  <div class="kpi-card"><div class="kpi-label">观察名单</div><div class="kpi-value">{len(watch_df)}</div><div class="kpi-note">等待确认</div></div>
+</div>
+''', unsafe_allow_html=True)
+
+if not sector_df.empty and mood == "弱":
+    st.markdown('<div class="warning-box">今天板块情绪偏弱，程序不会硬凑买点。没有买入观察时，最好的交易就是不交易。</div>', unsafe_allow_html=True)
+elif not sector_df.empty:
+    st.markdown('<div class="good-box">已按“先板块、后龙头”的漏斗逻辑完成扫描。先看最强板块，再看买入观察。</div>', unsafe_allow_html=True)
+
+# Tabs
+tabs = st.tabs(["🔥 最强板块", "🎯 买入观察", "👀 观察名单", "📊 个股详情", "🧹 过滤原因", "📋 全部数据"])
+
+with tabs[0]:
+    st.subheader("最强板块排行榜")
+    render_sector_cards(sector_df)
+    if not sector_df.empty:
+        st.dataframe(sector_df, use_container_width=True, hide_index=True)
+
+with tabs[1]:
+    st.subheader("买入观察名单")
+    st.caption("只展示热门板块里的前排。这里依然只是观察，不是让你直接买。")
+    render_list(buy_df, target_buy)
+    if not buy_df.empty:
+        show = buy_df[["代码","名称","市场","板块","信号","分数","现价","涨跌幅%","量比","成交额","标签","原因"]].copy()
+        show["成交额"] = show["成交额"].apply(fmt_turnover)
+        st.dataframe(show, use_container_width=True, hide_index=True)
+
+with tabs[2]:
+    st.subheader("观察名单")
+    render_list(watch_df, target_watch)
+    if not watch_df.empty:
+        show = watch_df[["代码","名称","市场","板块","信号","分数","现价","涨跌幅%","量比","成交额","标签","原因"]].copy()
+        show["成交额"] = show["成交额"].apply(fmt_turnover)
+        st.dataframe(show, use_container_width=True, hide_index=True)
+
+with tabs[3]:
+    st.subheader("个股详情与K线")
+    if stock_df.empty:
+        st.info("先扫描，再查看个股详情。")
+    else:
+        option_df = stock_df.copy()
+        option_df["选择"] = option_df["代码"] + " · " + option_df["名称"] + " · " + option_df["信号"]
+        pick = st.selectbox("选择股票", option_df["选择"].tolist())
+        row = option_df[option_df["选择"] == pick].iloc[0]
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("现价", row["现价"])
+        c2.metric("涨跌幅", f"{row['涨跌幅%']:+.2f}%")
+        c3.metric("量比", row["量比"])
+        c4.metric("信号", row["信号"])
+        st.markdown(f'''
+        <div class="reason-box">
+        <b>{row['名称']}（{row['代码']}）</b><br>
+        市场：{row['市场']}　板块：{row['板块']}　标签：{row['标签']}<br>
+        判断原因：{row['原因']}<br>
+        风险提示：买入观察不是买入命令，必须结合盘中承接、止损位和仓位控制。
+        </div>
+        ''', unsafe_allow_html=True)
+        plot_kline(row["代码"])
+
+with tabs[4]:
+    st.subheader("过滤原因")
+    if stock_df.empty:
+        st.info("先扫描。")
+    else:
+        filtered = stock_df[~stock_df["raw_signal"].isin(["BUY", "LIMIT", "WATCH", "WEAK"])]
+        if filtered.empty:
+            st.success("本次没有明显过滤项。")
+        else:
+            show = filtered[["代码","名称","市场","板块","信号","分数","涨跌幅%","量比","成交额","原因"]].copy()
+            show["成交额"] = show["成交额"].apply(fmt_turnover)
+            st.dataframe(show, use_container_width=True, hide_index=True)
+
+with tabs[5]:
+    st.subheader("全部扫描结果")
+    if stock_df.empty:
+        st.info("暂无数据。")
+    else:
+        show = stock_df[["代码","名称","市场","板块","是否热门板块","信号","分数","现价","涨跌幅%","5日涨幅%","量比","成交额","标签","原因"]].copy()
+        show["成交额"] = show["成交额"].apply(fmt_turnover)
+        st.dataframe(show, use_container_width=True, hide_index=True)
+        st.download_button("下载全部结果CSV", show.to_csv(index=False).encode("utf-8-sig"), file_name="短线选股结果.csv", mime="text/csv")
+
+# 底部说明
+st.caption("数据说明：本工具使用可用公开行情源，非交易所实时专业行情。A股涨停/炸板率、龙虎榜席位、实时盘前榜和新闻催化需要接入专业数据源后才能做成准实时版本。")
