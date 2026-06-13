@@ -370,8 +370,8 @@ def score_sector(sector: str, tickers: List[str], cfg: ScanConfig) -> Tuple[Dict
     }, df
 
 
-def run_scan(cfg: ScanConfig, manual: str = "") -> Tuple[pd.DataFrame, pd.DataFrame]:
-    sectors = selected_sectors(cfg.scope)
+def run_scan(cfg: ScanConfig, manual: str = "", sectors_override: Optional[Dict[str, List[str]]] = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    sectors = sectors_override if sectors_override is not None else selected_sectors(cfg.scope)
     # manual added into a synthetic sector, but won't drive sector-first logic too hard
     manual_list = []
     if manual.strip():
@@ -429,19 +429,21 @@ def render_list(df: pd.DataFrame, max_rows: int = 30):
         pill = "pill-buy" if raw in ["BUY"] else "pill-watch" if raw in ["WATCH", "WEAK"] else "pill-limit" if raw == "LIMIT" else "pill-risk"
         sym = str(r.get("代码", "--"))
         logo = sym[:2] if not sym[:2].isdigit() else sym[-2:]
-        html.append(f'''
-        <div class="row-card">
-          <div class="logo-dot">{logo}</div>
-          <div>
-            <div class="sym">{sym} <span class="signal-pill {pill}">{r.get('信号','')}</span></div>
-            <div class="name">{r.get('名称','')} · {r.get('板块','')} · {r.get('标签','')}</div>
-          </div>
-          <div class="price">
-            <div>{r.get('现价','--')}</div>
-            <div class="{chg_cls}">{chg:+.2f}%</div>
-          </div>
-        </div>
-        ''')
+        price = r.get("现价", "--")
+        try:
+            chg_txt = f"{float(chg):+.2f}%" if pd.notna(chg) else "--"
+        except Exception:
+            chg_txt = "--"
+        html.append(
+            f'<div class="row-card">'
+            f'<div class="logo-dot">{logo}</div>'
+            f'<div>'
+            f'<div class="sym">{sym} <span class="signal-pill {pill}">{r.get("信号", "")}</span></div>'
+            f'<div class="name">{r.get("名称", "")} · {r.get("板块", "")} · {r.get("标签", "")}</div>'
+            f'</div>'
+            f'<div class="price"><div>{price}</div><div class="{chg_cls}">{chg_txt}</div></div>'
+            f'</div>'
+        )
     html.append('</div>')
     st.markdown("".join(html), unsafe_allow_html=True)
 
@@ -452,14 +454,14 @@ def render_sector_cards(sector_df: pd.DataFrame):
         return
     html = ['<div class="sector-grid">']
     for _, r in sector_df.head(8).iterrows():
-        html.append(f'''
-        <div class="sector-card">
-          <div class="sector-name">🔥 {r['板块']}</div>
-          <div class="sector-score">{int(r['强度分'])}</div>
-          <div class="muted">上涨率 {r['上涨率%']}% · 强势 {r['强势数']} · 放量 {r['放量数']}</div>
-          <div class="muted" style="margin-top:.35rem; font-size:.82rem;">前排：{r['前排']}</div>
-        </div>
-        ''')
+        html.append(
+            f'<div class="sector-card">'
+            f'<div class="sector-name">🔥 {r["板块"]}</div>'
+            f'<div class="sector-score">{int(r["强度分"])}</div>'
+            f'<div class="muted">上涨率 {r["上涨率%"]}% · 强势 {r["强势数"]} · 放量 {r["放量数"]}</div>'
+            f'<div class="muted" style="margin-top:.35rem; font-size:.82rem;">前排：{r["前排"]}</div>'
+            f'</div>'
+        )
     html.append('</div>')
     st.markdown("".join(html), unsafe_allow_html=True)
 
@@ -482,29 +484,87 @@ def plot_kline(ticker: str, period="6mo"):
 # UI - 控制台
 # =========================
 with st.sidebar:
-    st.markdown("### ⚙️ 扫描设置")
-    scope = st.selectbox("市场范围", ["美股+A股", "美股", "A股"], index=0)
+    st.markdown("### ① 勾选市场")
+    use_us = st.checkbox("美股", value=True)
+    use_cn = st.checkbox("A股", value=True)
+
+    st.markdown("### ② 选择板块")
+    selected_us_sectors = []
+    selected_cn_sectors = []
+    if use_us:
+        selected_us_sectors = st.multiselect(
+            "美股板块",
+            list(US_SECTORS.keys()),
+            default=["AI/芯片", "大型科技", "加密/金融科技"],
+            help="先选你关心的方向，程序会在这些板块里自动找最强板块。",
+        )
+    if use_cn:
+        selected_cn_sectors = st.multiselect(
+            "A股板块",
+            list(CN_SECTORS.keys()),
+            default=["A股AI/算力", "A股芯片/半导体", "A股高成交核心"],
+            help="A股短线优先看题材强度、涨停/大阳、放量和成交额。",
+        )
+
+    # 由市场+板块生成候选池
+    sectors_to_scan: Dict[str, List[str]] = {}
+    for sec in selected_us_sectors:
+        sectors_to_scan[sec] = US_SECTORS[sec]
+    for sec in selected_cn_sectors:
+        sectors_to_scan[sec] = CN_SECTORS[sec]
+
+    st.markdown("### ③ 可选：指定股票")
+    stock_option_map: Dict[str, str] = {}
+    for sec, ticks in sectors_to_scan.items():
+        for t in ticks:
+            b = base_symbol(t)
+            label = f"{b} · {display_name(t)} · {sec}"
+            stock_option_map[label] = b
+    picked_labels = st.multiselect(
+        "股票池里勾选股票（可空）",
+        list(stock_option_map.keys()),
+        default=[],
+        help="不选则扫描所选板块全部候选股；选了股票后，可选择只扫描这些股票。",
+    )
+    only_picked = st.checkbox("只扫描我勾选的股票", value=False, help="开启后，程序不会扫描整个板块，只看你勾选的股票。")
+
+    if only_picked and picked_labels:
+        picked_codes = {stock_option_map[x] for x in picked_labels}
+        filtered: Dict[str, List[str]] = {}
+        for sec, ticks in sectors_to_scan.items():
+            keep = [t for t in ticks if base_symbol(t) in picked_codes]
+            if keep:
+                filtered[sec] = keep
+        sectors_to_scan = filtered
+
+    st.markdown("### ④ 输出目标")
     top_sector_count = st.slider("自动选择最强板块数", 2, 8, 5)
     target_buy = st.slider("买入观察最多显示", 3, 15, 10)
     target_watch = st.slider("观察名单最多显示", 5, 30, 20)
+
     st.markdown("### 🧹 过滤条件")
     min_us = st.number_input("美股最低成交额/美元", min_value=1_000_000, max_value=500_000_000, value=20_000_000, step=5_000_000)
     min_cn = st.number_input("A股最低成交额/人民币", min_value=10_000_000, max_value=2_000_000_000, value=200_000_000, step=50_000_000)
-    manual = st.text_area("手动追加代码（可空）", placeholder="例如：SPCX, NVDA, 600519, 300750", height=86)
+    manual = st.text_area("手动追加代码（可空）", placeholder="例如：SPCX, NVDA, 600519, 300750", height=76)
+
+    st.markdown("---")
+    selected_market_text = " + ".join((["美股"] if use_us else []) + (["A股"] if use_cn else [])) or "未选择"
+    st.caption(f"当前市场：{selected_market_text}｜板块数：{len(sectors_to_scan)}｜候选股约：{sum(len(v) for v in sectors_to_scan.values())}只")
     st.caption("龙虎榜、实时盘前榜、新闻催化需要专业数据源。本版本先用行情强度做漏斗筛选。")
 
-cfg = ScanConfig(scope=scope, top_sector_count=top_sector_count, target_buy=target_buy, target_watch=target_watch, min_us_dollar_vol=float(min_us), min_cn_turnover=float(min_cn))
+scope_label = "美股+A股" if use_us and use_cn else "美股" if use_us else "A股" if use_cn else "未选择"
+cfg = ScanConfig(scope=scope_label, top_sector_count=top_sector_count, target_buy=target_buy, target_watch=target_watch, min_us_dollar_vol=float(min_us), min_cn_turnover=float(min_cn))
 
 st.markdown('''
 <div class="tv-topbar">
   <div class="tv-title">短线情绪板块选股器</div>
-  <div class="tv-subtitle">先找最强板块 → 再找前排个股 → 自动过滤低质量机会</div>
+  <div class="tv-subtitle">勾选市场 → 选择板块 → 可选股票 → 先板块后个股自动筛选</div>
 </div>
 ''', unsafe_allow_html=True)
 
 col_a, col_b = st.columns([1, 1])
 with col_a:
-    run_btn = st.button("开始扫描热门板块和前排股票", type="primary", use_container_width=True)
+    run_btn = st.button("开始扫描：市场→板块→股票", type="primary", use_container_width=True)
 with col_b:
     clear_btn = st.button("清除本次结果", use_container_width=True)
 if clear_btn:
@@ -513,12 +573,16 @@ if clear_btn:
 
 if run_btn or ("sector_df" not in st.session_state):
     if run_btn:
-        with st.spinner("正在执行：板块强度扫描 → 热门板块建池 → 个股漏斗筛选..."):
-            sector_df, stock_df = run_scan(cfg, manual=manual)
+        with st.spinner("正在执行：市场选择 → 板块强度扫描 → 热门板块建池 → 个股漏斗筛选..."):
+            if not sectors_to_scan and not manual.strip():
+                st.warning("请至少勾选一个市场和一个板块，或者在手动追加里输入股票代码。")
+                sector_df, stock_df = pd.DataFrame(), pd.DataFrame()
+            else:
+                sector_df, stock_df = run_scan(cfg, manual=manual, sectors_override=sectors_to_scan)
             st.session_state["sector_df"] = sector_df
             st.session_state["stock_df"] = stock_df
     else:
-        st.info("点击上方按钮开始扫描。")
+        st.info("先在左侧勾选美股/A股，再选择板块；不懂就保持默认，然后点击上方按钮开始扫描。")
 
 sector_df = st.session_state.get("sector_df", pd.DataFrame())
 stock_df = st.session_state.get("stock_df", pd.DataFrame())
@@ -587,14 +651,13 @@ with tabs[3]:
         c2.metric("涨跌幅", f"{row['涨跌幅%']:+.2f}%")
         c3.metric("量比", row["量比"])
         c4.metric("信号", row["信号"])
-        st.markdown(f'''
-        <div class="reason-box">
-        <b>{row['名称']}（{row['代码']}）</b><br>
-        市场：{row['市场']}　板块：{row['板块']}　标签：{row['标签']}<br>
-        判断原因：{row['原因']}<br>
-        风险提示：买入观察不是买入命令，必须结合盘中承接、止损位和仓位控制。
-        </div>
-        ''', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="reason-box"><b>{row["名称"]}（{row["代码"]}）</b><br>'
+            f'市场：{row["市场"]}　板块：{row["板块"]}　标签：{row["标签"]}<br>'
+            f'判断原因：{row["原因"]}<br>'
+            f'风险提示：买入观察不是买入命令，必须结合盘中承接、止损位和仓位控制。</div>',
+            unsafe_allow_html=True,
+        )
         plot_kline(row["代码"])
 
 with tabs[4]:
