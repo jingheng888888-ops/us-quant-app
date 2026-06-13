@@ -1,436 +1,511 @@
+import math
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 import yfinance as yf
 
-st.set_page_config(page_title="美股/A股短线量化扫描器", page_icon="📈", layout="centered")
+st.set_page_config(
+    page_title="美股+A股热门股自动扫描器",
+    page_icon="📈",
+    layout="centered",
+)
 
-st.markdown("""
-<style>
-.block-container {padding-top: 1.2rem; padding-bottom: 1.2rem;}
-div[data-testid="stMetric"] {background: #F8FAFC; border: 1px solid #E2E8F0; padding: 0.7rem; border-radius: 0.75rem;}
-@media (max-width: 640px) {
-    .block-container {padding-left: 0.75rem; padding-right: 0.75rem;}
-    h1 {font-size: 1.45rem !important;}
-    h2, h3 {font-size: 1.1rem !important;}
-    .stDataFrame {font-size: 0.82rem;}
+st.markdown(
+    """
+    <style>
+    .block-container {padding-top: 1.0rem; padding-bottom: 1.2rem; max-width: 980px;}
+    div[data-testid="stMetric"] {background:#11182710; border:1px solid #37415133; padding:0.65rem; border-radius:0.75rem;}
+    .small-note {font-size: 0.88rem; color: #9ca3af;}
+    @media (max-width: 640px) {
+        .block-container {padding-left:0.65rem; padding-right:0.65rem;}
+        h1 {font-size:1.35rem !important;}
+        h2, h3 {font-size:1.08rem !important;}
+        .stDataFrame {font-size:0.78rem;}
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# -----------------------------
+# 股票池：只做“热门池”，不是全市场。
+# -----------------------------
+US_POOLS: Dict[str, List[str]] = {
+    "AI/芯片": ["NVDA", "AMD", "AVGO", "ARM", "MU", "SMCI", "MRVL", "QCOM", "TSM", "ASML", "AMAT", "LRCX", "INTC", "SMH"],
+    "大型科技": ["MSFT", "AAPL", "META", "AMZN", "GOOGL", "NFLX", "TSLA", "PLTR", "ORCL", "NOW", "APP", "CRM"],
+    "加密/金融科技": ["COIN", "MSTR", "HOOD", "MARA", "RIOT", "CLSK", "IBIT", "BITO"],
+    "杠杆ETF": ["SOXL", "SOXS", "TQQQ", "SQQQ", "TECL", "FNGU", "UVXY"],
+    "新股/热门": ["SPCX", "RDDT", "ARM", "CRCL", "IREN", "OKLO", "TEM", "BBAI"],
 }
-</style>
-""", unsafe_allow_html=True)
 
+CN_POOLS: Dict[str, List[str]] = {
+    "AI/算力/软件": ["002230", "300308", "000977", "300496", "688111", "688041", "603019", "300033", "600570", "002415"],
+    "芯片/半导体": ["688981", "688256", "603986", "002371", "300782", "688012", "600584", "688008", "688072", "002409"],
+    "新能源/车/机器人": ["300750", "002594", "601012", "300124", "002475", "300014", "002050", "300274", "002920", "002466"],
+    "核心大盘/金融消费": ["600519", "000858", "601318", "600036", "600030", "601899", "000001", "601166", "600900", "000333"],
+    "高波动/题材观察": ["300750", "002594", "002475", "300308", "603019", "300033", "688981", "688111"],
+}
+
+TAG_MAP: Dict[str, List[str]] = {
+    # US
+    "NVDA": ["AI", "芯片"], "AMD": ["AI", "芯片"], "AVGO": ["AI", "芯片"], "ARM": ["AI", "芯片", "新股/热门"],
+    "MU": ["芯片"], "SMCI": ["AI", "服务器"], "MRVL": ["芯片"], "QCOM": ["芯片"], "TSM": ["芯片"], "ASML": ["芯片"],
+    "SMH": ["芯片ETF"], "SOXL": ["杠杆ETF", "芯片"], "SOXS": ["杠杆ETF", "反向"],
+    "TQQQ": ["杠杆ETF"], "SQQQ": ["杠杆ETF", "反向"], "TECL": ["杠杆ETF"], "FNGU": ["杠杆ETF"], "UVXY": ["杠杆ETF", "高风险"],
+    "TSLA": ["科技", "高波动"], "PLTR": ["AI", "高波动"], "META": ["大型科技"], "MSFT": ["AI", "大型科技"],
+    "AAPL": ["大型科技"], "AMZN": ["大型科技"], "GOOGL": ["AI", "大型科技"], "NFLX": ["大型科技"], "APP": ["AI", "高波动"],
+    "COIN": ["加密"], "MSTR": ["加密", "高波动"], "HOOD": ["金融科技", "加密"], "MARA": ["加密", "高波动"], "RIOT": ["加密", "高波动"], "CLSK": ["加密"],
+    "SPCX": ["新股/热门", "航天", "高波动"], "RDDT": ["新股/热门"], "CRCL": ["新股/热门", "加密"],
+    # CN
+    "002230": ["AI", "算力"], "300308": ["AI", "算力"], "000977": ["AI", "服务器"], "300496": ["AI"],
+    "688111": ["AI", "芯片"], "688041": ["AI", "芯片"], "603019": ["AI", "软件"], "300033": ["金融科技"], "600570": ["金融科技"],
+    "688981": ["芯片"], "688256": ["芯片"], "603986": ["芯片"], "002371": ["芯片"], "300782": ["芯片"], "688012": ["芯片"], "600584": ["芯片"],
+    "300750": ["新能源", "锂电"], "002594": ["新能源车"], "601012": ["新能源"], "002475": ["新能源", "锂电"],
+    "600519": ["消费", "核心资产"], "000858": ["消费", "核心资产"], "601318": ["金融"], "600036": ["金融"], "600030": ["券商"], "601899": ["资源"],
+}
 
 @dataclass
-class StrategyParams:
-    market: str = "美股"
+class Params:
     short_ma: int = 5
     long_ma: int = 20
-    volume_window: int = 20
-    volume_multiplier: float = 1.5
-    min_daily_return_pct: float = 2.0
-    stop_loss_pct: float = 5.0
-    max_hold_days: int = 5
-    use_market_filter: bool = False
-    market_ticker: str = "SPY"
+    vol_window: int = 20
+    vol_multi: float = 1.5
+    min_ret: float = 2.0
+    stop_loss: float = 5.0
+    max_hold: int = 5
+    min_dollar_vol_us: float = 50_000_000
+    min_turnover_cn: float = 200_000_000
+    max_scan: int = 60
 
 
-def _clean_ticker(ticker: str) -> str:
-    return str(ticker).strip().upper().replace(" ", "")
+def unique(seq: List[str]) -> List[str]:
+    out = []
+    for x in seq:
+        if x and x not in out:
+            out.append(x)
+    return out
 
 
-def convert_a_share_code(code: str) -> str:
-    code = _clean_ticker(code)
-    if not code:
-        return ""
-    if code.endswith((".SS", ".SZ", ".BJ")):
-        return code
-    digits = "".join(ch for ch in code if ch.isdigit())
-    if len(digits) != 6:
-        return code
-    if digits.startswith(("600", "601", "603", "605", "688")):
-        return f"{digits}.SS"
-    if digits.startswith(("000", "001", "002", "003", "300", "301")):
-        return f"{digits}.SZ"
-    return code
+def parse_tickers(raw: str) -> List[str]:
+    return unique([x.strip().upper().replace(" ", "") for x in raw.replace("\n", ",").split(",") if x.strip()])
 
 
-def display_code_from_yahoo(ticker: str) -> str:
-    ticker = _clean_ticker(ticker)
-    return ticker.replace(".SS", "").replace(".SZ", "").replace(".BJ", "")
+def cn_to_yahoo(code: str) -> str:
+    s = code.strip().upper()
+    if s.endswith(".SS") or s.endswith(".SZ"):
+        return s
+    s = s.replace("SH", "").replace("SZ", "")
+    if s.startswith(("6", "9")) or s.startswith("688"):
+        return f"{s}.SS"
+    return f"{s}.SZ"
 
 
-def parse_tickers(raw: str, market: str) -> List[str]:
-    tickers = []
-    for item in raw.replace("\n", ",").split(","):
-        t = _clean_ticker(item)
-        if not t:
-            continue
-        if market == "A股":
-            t = convert_a_share_code(t)
-        if t and t not in tickers:
-            tickers.append(t)
-    return tickers
+def display_code(yahoo_code: str) -> str:
+    return yahoo_code.replace(".SS", "").replace(".SZ", "")
 
 
-def normalize_yf_columns(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
+def tags_for(code: str) -> str:
+    base = display_code(code).upper()
+    tags = TAG_MAP.get(base, TAG_MAP.get(code.upper(), []))
+    return " / ".join(tags) if tags else "—"
+
+
+def get_pool(scope: str, us_cats: List[str], cn_cats: List[str], include_leverage: bool, include_hot: bool) -> Tuple[List[Tuple[str, str]], str]:
+    """Return list of (market, ticker). market is US or CN."""
+    items: List[Tuple[str, str]] = []
+    if scope in ("美股热门池", "美股+A股热门池"):
+        for cat in us_cats:
+            if cat == "杠杆ETF" and not include_leverage:
+                continue
+            if cat == "新股/热门" and not include_hot:
+                continue
+            for t in US_POOLS.get(cat, []):
+                items.append(("US", t))
+    if scope in ("A股热门池", "美股+A股热门池"):
+        for cat in cn_cats:
+            for c in CN_POOLS.get(cat, []):
+                items.append(("CN", cn_to_yahoo(c)))
+    # Deduplicate by market+ticker
+    dedup = []
+    seen = set()
+    for m, t in items:
+        key = f"{m}:{t}"
+        if key not in seen:
+            seen.add(key)
+            dedup.append((m, t))
+    return dedup, f"自动热门池：{len(dedup)}只"
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 20)
+def load_history(ticker: str, period: str = "6mo", interval: str = "1d") -> pd.DataFrame:
+    try:
+        df = yf.download(
+            ticker,
+            period=period,
+            interval=interval,
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+        )
+    except Exception:
+        return pd.DataFrame()
+
     if df is None or df.empty:
         return pd.DataFrame()
+
     out = df.copy()
     if isinstance(out.columns, pd.MultiIndex):
-        upper_ticker = ticker.upper()
+        # yfinance sometimes returns MultiIndex even for one ticker.
+        t_up = ticker.upper()
         for level in range(out.columns.nlevels):
-            values = [str(v).upper() for v in out.columns.get_level_values(level)]
-            if upper_ticker in values:
+            vals = [str(v).upper() for v in out.columns.get_level_values(level)]
+            if t_up in vals:
                 try:
-                    out = out.xs(upper_ticker, level=level, axis=1, drop_level=True)
+                    out = out.xs(t_up, level=level, axis=1, drop_level=True)
                     break
                 except Exception:
                     pass
-        else:
-            out.columns = ["_".join([str(x) for x in col if str(x) != ""]) for col in out.columns]
+        if isinstance(out.columns, pd.MultiIndex):
+            out.columns = ["_".join([str(x) for x in col if str(x)]) for col in out.columns]
+
     out = out.rename(columns={c: str(c).title() for c in out.columns})
-    required = ["Open", "High", "Low", "Close", "Volume"]
-    if any(c not in out.columns for c in required):
+    req = ["Open", "High", "Low", "Close", "Volume"]
+    if any(c not in out.columns for c in req):
         return pd.DataFrame()
-    out = out[required].dropna()
+    out = out[req].dropna()
     out.index = pd.to_datetime(out.index)
     return out
 
 
-@st.cache_data(show_spinner=False, ttl=60 * 30)
-def load_history(ticker: str, period: str, interval: str) -> pd.DataFrame:
-    ticker = _clean_ticker(ticker)
-    try:
-        df = yf.download(ticker, period=period, interval=interval, auto_adjust=True, progress=False, threads=False)
-        return normalize_yf_columns(df, ticker)
-    except Exception:
-        return pd.DataFrame()
-
-
-def add_indicators(df: pd.DataFrame, params: StrategyParams) -> pd.DataFrame:
+def add_indicators(df: pd.DataFrame, p: Params) -> pd.DataFrame:
     out = df.copy()
-    out["MA_SHORT"] = out["Close"].rolling(params.short_ma).mean()
-    out["MA_LONG"] = out["Close"].rolling(params.long_ma).mean()
-    out["VOL_MA"] = out["Volume"].rolling(params.volume_window).mean()
+    out["MA_SHORT"] = out["Close"].rolling(p.short_ma).mean()
+    out["MA_LONG"] = out["Close"].rolling(p.long_ma).mean()
+    out["VOL_MA"] = out["Volume"].rolling(p.vol_window).mean()
     out["RET_1D"] = out["Close"].pct_change()
+    out["RET_5D"] = out["Close"].pct_change(5)
     out["VOL_RATIO"] = out["Volume"] / out["VOL_MA"]
+    out["TURNOVER"] = out["Close"] * out["Volume"]
     out["HIGH_20"] = out["Close"].rolling(20).max()
     out["DRAWDOWN_20"] = out["Close"] / out["HIGH_20"] - 1
     return out
 
 
-def is_chinext_or_star(ticker: str) -> bool:
-    code = display_code_from_yahoo(ticker)
-    return code.startswith(("300", "301", "688"))
+def scan_one(market: str, ticker: str, p: Params, period: str) -> Dict:
+    df = load_history(ticker, period=period)
+    name = display_code(ticker) if market == "CN" else ticker
+    if df.empty or len(df) < max(p.long_ma, p.vol_window) + 5:
+        return {
+            "市场": "A股" if market == "CN" else "美股", "代码": name, "信号": "NO_DATA", "评分": 0,
+            "收盘": None, "涨幅%": None, "5日%": None, "量比": None, "成交额": None,
+            "标签": tags_for(ticker), "原因": "数据不足/暂时读不到"
+        }
+    ind = add_indicators(df, p).dropna()
+    if ind.empty:
+        return {
+            "市场": "A股" if market == "CN" else "美股", "代码": name, "信号": "NO_DATA", "评分": 0,
+            "收盘": None, "涨幅%": None, "5日%": None, "量比": None, "成交额": None,
+            "标签": tags_for(ticker), "原因": "指标数据不足"
+        }
+    r = ind.iloc[-1]
+    close = float(r["Close"])
+    ret1 = float(r["RET_1D"] * 100)
+    ret5 = float(r["RET_5D"] * 100)
+    vol_ratio = float(r["VOL_RATIO"])
+    turnover = float(r["TURNOVER"])
 
+    trend = bool(r["Close"] > r["MA_LONG"] and r["MA_SHORT"] > r["MA_LONG"])
+    momentum = bool(ret1 >= p.min_ret)
+    volume = bool(vol_ratio >= p.vol_multi)
+    exit_risk = bool(r["Close"] < r["MA_LONG"] or r["DRAWDOWN_20"] <= -p.stop_loss / 100)
+    low_liq = False
+    if market == "US":
+        low_liq = bool(turnover < p.min_dollar_vol_us)
+    else:
+        low_liq = bool(turnover < p.min_turnover_cn)
 
-def near_a_share_limit_up(ticker: str, ret_pct: float) -> bool:
-    if is_chinext_or_star(ticker):
-        return ret_pct >= 18.5
-    return ret_pct >= 9.2
-
-
-def market_ok(params: StrategyParams, period: str, interval: str) -> Tuple[bool, str]:
-    if not params.use_market_filter:
-        return True, "未启用市场过滤"
-    m_ticker = _clean_ticker(params.market_ticker or "")
-    if params.market == "A股":
-        m_ticker = convert_a_share_code(m_ticker)
-    mdf = load_history(m_ticker, period, interval)
-    if mdf.empty or len(mdf) < params.long_ma + 2:
-        return False, f"无法读取市场过滤标的 {m_ticker}"
-    mdf = add_indicators(mdf, params).dropna()
-    if mdf.empty:
-        return False, f"{m_ticker} 数据不足"
-    last = mdf.iloc[-1]
-    ok = bool(last["Close"] > last["MA_LONG"])
-    return ok, f"{m_ticker}: 收盘 {last['Close']:.2f}，长均线 {last['MA_LONG']:.2f}"
-
-
-def classify_signal(ticker: str, row: pd.Series, market_is_ok: bool, params: StrategyParams) -> Tuple[str, int, str]:
-    trend_ok = bool(row["Close"] > row["MA_LONG"] and row["MA_SHORT"] > row["MA_LONG"])
-    momentum_ok = bool(row["RET_1D"] >= params.min_daily_return_pct / 100)
-    volume_ok = bool(row["VOL_RATIO"] >= params.volume_multiplier)
-    risk_exit = bool(row["Close"] < row["MA_LONG"] or row["DRAWDOWN_20"] <= -params.stop_loss_pct / 100)
-    ret_pct = float(row["RET_1D"] * 100)
-    limit_watch = params.market == "A股" and near_a_share_limit_up(ticker, ret_pct)
-
+    # Score: 只用于排序，不等于买入概率。
     score = 0
-    score += 30 if trend_ok else 0
-    score += 25 if momentum_ok else 0
-    score += 25 if volume_ok else 0
-    score += 20 if market_is_ok else 0
-    score += 10 if limit_watch else 0
+    score += 25 if trend else 0
+    score += 25 if momentum else 0
+    score += 25 if volume else 0
+    score += 10 if ret5 > 0 else 0
+    score += 15 if not low_liq else 0
+    score = min(score, 100)
 
-    reasons = [
-        "趋势强" if trend_ok else "趋势弱",
-        "有动量" if momentum_ok else "动量不足",
-        "放量" if volume_ok else "量能不足",
-        "大盘允许" if market_is_ok else "大盘过滤不通过",
-    ]
-    if limit_watch:
-        reasons.append("接近涨停/强势涨停候选")
+    reasons = []
+    reasons.append("趋势强" if trend else "趋势弱")
+    reasons.append("涨幅达标" if momentum else "涨幅不足")
+    reasons.append("放量" if volume else "量能不足")
+    if low_liq:
+        reasons.append("低成交过滤")
 
-    if risk_exit and not (limit_watch and trend_ok and volume_ok and market_is_ok):
-        signal = "EXIT_RISK"
-    elif params.market == "A股" and limit_watch and trend_ok and volume_ok and market_is_ok:
+    if low_liq:
+        signal = "FILTER_LOW_LIQ"
+    elif market == "CN" and ret1 >= 9.2 and volume:
         signal = "LIMIT_WATCH"
-    elif trend_ok and momentum_ok and volume_ok and market_is_ok:
+    elif trend and momentum and volume:
         signal = "BUY_WATCH"
-    elif trend_ok and market_is_ok:
+    elif trend and (ret1 > 0 or vol_ratio >= 1.2):
         signal = "WATCH"
+    elif exit_risk:
+        signal = "EXIT_RISK"
     else:
         signal = "NO_TRADE"
-    return signal, int(score), " / ".join(reasons)
 
-
-def scan_ticker(ticker: str, params: StrategyParams, period: str, interval: str, market_is_ok: bool) -> Dict:
-    df = load_history(ticker, period, interval)
-    display_ticker = display_code_from_yahoo(ticker) if params.market == "A股" else ticker
-    base = {"Ticker": display_ticker, "Yahoo": ticker}
-    if df.empty or len(df) < max(params.long_ma, params.volume_window) + 5:
-        return {**base, "Signal": "NO_DATA", "Score": 0, "Close": np.nan, "Ret_1D_%": np.nan, "Vol_Ratio": np.nan,
-                "MA_Short": np.nan, "MA_Long": np.nan, "Risk": "数据不足", "Reason": "无法读取足够历史行情"}
-    ind = add_indicators(df, params).dropna()
-    if ind.empty:
-        return {**base, "Signal": "NO_DATA", "Score": 0, "Close": np.nan, "Ret_1D_%": np.nan, "Vol_Ratio": np.nan,
-                "MA_Short": np.nan, "MA_Long": np.nan, "Risk": "数据不足", "Reason": "指标计算后数据不足"}
-
-    last = ind.iloc[-1]
-    signal, score, reason = classify_signal(ticker, last, market_is_ok, params)
-    if signal in ("BUY_WATCH", "LIMIT_WATCH"):
-        risk = "中高：只观察，等盘中确认"
-    elif signal == "WATCH":
-        risk = "中：等突破确认"
-    elif signal == "EXIT_RISK":
-        risk = "高：趋势/回撤风险"
-    else:
-        risk = "低机会：不碰"
-
-    row = {
-        **base,
-        "Signal": signal,
-        "Score": score,
-        "Close": round(float(last["Close"]), 2),
-        "Ret_1D_%": round(float(last["RET_1D"] * 100), 2),
-        "Vol_Ratio": round(float(last["VOL_RATIO"]), 2),
-        "MA_Short": round(float(last["MA_SHORT"]), 2),
-        "MA_Long": round(float(last["MA_LONG"]), 2),
-        "Risk": risk,
-        "Reason": reason,
+    return {
+        "市场": "A股" if market == "CN" else "美股",
+        "代码": name,
+        "信号": signal,
+        "评分": int(score),
+        "收盘": round(close, 2),
+        "涨幅%": round(ret1, 2),
+        "5日%": round(ret5, 2),
+        "量比": round(vol_ratio, 2),
+        "成交额": round(turnover / 100_000_000, 2),
+        "标签": tags_for(ticker),
+        "原因": " / ".join(reasons),
     }
-    if params.market == "A股":
-        row["Board"] = "创业板/科创板20%" if is_chinext_or_star(ticker) else "主板约10%"
-    return row
 
 
-def build_trade_signals(df: pd.DataFrame, params: StrategyParams, market_series: pd.Series | None = None) -> pd.DataFrame:
-    out = add_indicators(df, params).copy()
-    out["MARKET_OK"] = True
-    if market_series is not None:
-        aligned = market_series.reindex(out.index).ffill().fillna(False)
-        out["MARKET_OK"] = aligned.astype(bool)
-    out["BUY_CONDITION"] = (
-        (out["Close"] > out["MA_LONG"]) &
-        (out["MA_SHORT"] > out["MA_LONG"]) &
-        (out["RET_1D"] >= params.min_daily_return_pct / 100) &
-        (out["VOL_RATIO"] >= params.volume_multiplier) &
-        (out["MARKET_OK"])
+def sort_result(df: pd.DataFrame) -> pd.DataFrame:
+    order = {
+        "LIMIT_WATCH": 0,
+        "BUY_WATCH": 1,
+        "WATCH": 2,
+        "EXIT_RISK": 3,
+        "NO_TRADE": 4,
+        "FILTER_LOW_LIQ": 5,
+        "NO_DATA": 6,
+    }
+    if df.empty:
+        return df
+    df = df.copy()
+    df["_sort"] = df["信号"].map(order).fillna(9)
+    return df.sort_values(["_sort", "评分", "涨幅%", "量比"], ascending=[True, False, False, False]).drop(columns=["_sort"])
+
+
+def build_trade_signals(df: pd.DataFrame, p: Params) -> pd.DataFrame:
+    out = add_indicators(df, p).dropna().copy()
+    out["BUY"] = (
+        (out["Close"] > out["MA_LONG"])
+        & (out["MA_SHORT"] > out["MA_LONG"])
+        & (out["RET_1D"] >= p.min_ret / 100)
+        & (out["VOL_RATIO"] >= p.vol_multi)
     )
-    out["SELL_CONDITION"] = (out["Close"] < out["MA_LONG"]) | (out["DRAWDOWN_20"] <= -params.stop_loss_pct / 100)
-    return out.dropna().copy()
+    out["SELL"] = (out["Close"] < out["MA_LONG"]) | (out["DRAWDOWN_20"] <= -p.stop_loss / 100)
+    return out
 
 
-def run_backtest(df: pd.DataFrame, params: StrategyParams, market_series: pd.Series | None = None):
-    data = build_trade_signals(df, params, market_series)
+def run_backtest(df: pd.DataFrame, p: Params) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
+    data = build_trade_signals(df, p)
     if data.empty:
-        return data, pd.DataFrame(), {}
-    cash, shares = 1.0, 0.0
-    in_position = False
+        return pd.DataFrame(), pd.DataFrame(), {}
+    cash = 1.0
+    shares = 0.0
+    in_pos = False
     entry_price = 0.0
     entry_date = None
-    entry_i = None
-    trades, equity_curve = [], []
-
+    entry_i = 0
+    trades = []
+    curve = []
     for i in range(1, len(data)):
-        prev, today = data.iloc[i - 1], data.iloc[i]
+        prev = data.iloc[i - 1]
+        today = data.iloc[i]
         date = data.index[i]
-        open_price, close_price = float(today["Open"]), float(today["Close"])
-
-        if not in_position and bool(prev["BUY_CONDITION"]) and open_price > 0:
-            shares = cash / open_price
-            cash = 0.0
-            in_position = True
-            entry_price = open_price
-            entry_date = date
-            entry_i = i
-        elif in_position:
-            hold_days = i - entry_i if entry_i is not None else 0
-            stop_loss_hit = open_price <= entry_price * (1 - params.stop_loss_pct / 100)
-            max_hold_hit = hold_days >= params.max_hold_days
-            sell_signal = bool(prev["SELL_CONDITION"])
-            if stop_loss_hit or max_hold_hit or sell_signal:
-                exit_price = open_price
-                cash = shares * exit_price
+        open_p = float(today["Open"])
+        close_p = float(today["Close"])
+        if not in_pos and bool(prev["BUY"]):
+            if open_p > 0:
+                shares = cash / open_p
+                cash = 0.0
+                in_pos = True
+                entry_price = open_p
+                entry_date = date
+                entry_i = i
+        elif in_pos:
+            hold = i - entry_i
+            stop = open_p <= entry_price * (1 - p.stop_loss / 100)
+            maxhold = hold >= p.max_hold
+            sell = bool(prev["SELL"])
+            if stop or maxhold or sell:
+                exit_p = open_p
+                cash = shares * exit_p
                 shares = 0.0
-                in_position = False
-                ret = exit_price / entry_price - 1
+                in_pos = False
                 trades.append({
-                    "Entry_Date": entry_date.date(), "Exit_Date": date.date(),
-                    "Entry": round(entry_price, 2), "Exit": round(exit_price, 2),
-                    "Return_%": round(ret * 100, 2), "Hold_Days": hold_days,
-                    "Exit_Reason": "stop_loss" if stop_loss_hit else ("max_hold" if max_hold_hit else "sell_signal")
+                    "买入日期": entry_date.date(),
+                    "卖出日期": date.date(),
+                    "买入价": round(entry_price, 2),
+                    "卖出价": round(exit_p, 2),
+                    "收益%": round((exit_p / entry_price - 1) * 100, 2),
+                    "持仓天数": hold,
+                    "退出原因": "止损" if stop else ("到期" if maxhold else "卖出信号"),
                 })
-        equity_curve.append({"Date": date, "Equity": cash + shares * close_price})
-
-    equity_df = pd.DataFrame(equity_curve).set_index("Date") if equity_curve else pd.DataFrame()
-    trades_df = pd.DataFrame(trades)
-    if equity_df.empty:
-        return equity_df, trades_df, {}
-    total_return = float(equity_df["Equity"].iloc[-1] - 1)
-    rolling_max = equity_df["Equity"].cummax()
-    max_drawdown = float((equity_df["Equity"] / rolling_max - 1).min())
-    win_rate = float((trades_df["Return_%"] > 0).mean()) if not trades_df.empty else 0.0
-    avg_trade = float(trades_df["Return_%"].mean()) if not trades_df.empty else 0.0
-    stats = {"Total_Return_%": round(total_return * 100, 2), "Max_Drawdown_%": round(max_drawdown * 100, 2),
-             "Trades": int(len(trades_df)), "Win_Rate_%": round(win_rate * 100, 2), "Avg_Trade_%": round(avg_trade, 2)}
-    return equity_df, trades_df, stats
+        curve.append({"日期": date, "净值": cash + shares * close_p})
+    eq = pd.DataFrame(curve).set_index("日期") if curve else pd.DataFrame()
+    tr = pd.DataFrame(trades)
+    if eq.empty:
+        return eq, tr, {}
+    total = float(eq["净值"].iloc[-1] - 1)
+    dd = float((eq["净值"] / eq["净值"].cummax() - 1).min())
+    win = float((tr["收益%"] > 0).mean()) if not tr.empty else 0.0
+    avg = float(tr["收益%"].mean()) if not tr.empty else 0.0
+    stats = {"总收益%": round(total * 100, 2), "最大回撤%": round(dd * 100, 2), "交易次数": len(tr), "胜率%": round(win * 100, 2), "单笔均值%": round(avg, 2)}
+    return eq, tr, stats
 
 
-def build_market_series(params: StrategyParams, period: str, interval: str):
-    if not params.use_market_filter:
-        return None
-    m_ticker = _clean_ticker(params.market_ticker)
-    if params.market == "A股":
-        m_ticker = convert_a_share_code(m_ticker)
-    mdf = load_history(m_ticker, period, interval)
-    if mdf.empty:
-        return None
-    mind = add_indicators(mdf, params)
-    return (mind["Close"] > mind["MA_LONG"]).dropna()
-
-
-st.title("📈 美股/A股短线量化扫描器")
-st.caption("日线动量扫描 + 简化回测。它是过滤器，不是下单命令。")
+# -----------------------------
+# UI
+# -----------------------------
+st.title("📈 美股+A股热门股自动扫描器")
+st.caption("自动扫描热门池，找涨幅强、成交量放大的股票，并标记 AI/芯片/加密/新股/杠杆ETF。不是下单机器。")
 
 with st.sidebar:
-    st.header("参数设置")
-    market = st.radio("市场", ["美股", "A股"], horizontal=True)
+    st.header("扫描设置")
+    scope = st.selectbox("扫描范围", ["美股热门池", "A股热门池", "美股+A股热门池", "手动输入"], index=0)
+    period = st.selectbox("历史周期", ["3mo", "6mo", "1y", "2y"], index=1)
 
-    if market == "美股":
-        default_pool = "NVDA, AMD, AVGO, ARM, MU, TSLA, PLTR, META, MSFT, AAPL, AMZN, GOOGL, NFLX, SMH, SOXL"
-        default_market_ticker = "SPY"
-        min_ret_default = 2.0
+    if scope in ("美股热门池", "美股+A股热门池"):
+        us_cats = st.multiselect("美股板块", list(US_POOLS.keys()), default=["AI/芯片", "大型科技", "加密/金融科技"])
     else:
-        default_pool = "600519, 300750, 002594, 601318, 000001, 600036, 000858, 601899, 002475, 300308, 601012, 600030"
-        default_market_ticker = "000001.SS"
-        min_ret_default = 3.0
-
-    raw_tickers = st.text_area("股票池，用英文逗号分隔", value=default_pool, height=120)
-    period = st.selectbox("历史周期", ["3mo", "6mo", "1y", "2y", "5y"], index=2)
-    interval = st.selectbox("K线周期", ["1d"], index=0, help="第一版先做日线。盘中版下一版再做。")
-    short_ma = st.number_input("短均线", min_value=2, max_value=50, value=5, step=1)
-    long_ma = st.number_input("长均线", min_value=5, max_value=200, value=20, step=1)
-    volume_multiplier = st.number_input("放量倍数", min_value=1.0, max_value=10.0, value=1.5, step=0.1)
-    min_daily_return_pct = st.number_input("最小当日涨幅 %", min_value=-10.0, max_value=20.0, value=float(min_ret_default), step=0.5)
-    stop_loss_pct = st.number_input("止损/回撤阈值 %", min_value=1.0, max_value=30.0, value=5.0, step=0.5)
-    max_hold_days = st.number_input("最长持仓天数", min_value=1, max_value=60, value=5, step=1)
-    use_market_filter = st.checkbox("启用大盘过滤", value=False)
-    market_ticker = st.text_input("大盘过滤标的，只填一个", value=default_market_ticker)
-
-params = StrategyParams(
-    market=market, short_ma=int(short_ma), long_ma=int(long_ma),
-    volume_multiplier=float(volume_multiplier), min_daily_return_pct=float(min_daily_return_pct),
-    stop_loss_pct=float(stop_loss_pct), max_hold_days=int(max_hold_days),
-    use_market_filter=bool(use_market_filter), market_ticker=_clean_ticker(market_ticker or default_market_ticker)
-)
-tickers = parse_tickers(raw_tickers, market)
-
-tab_scan, tab_backtest, tab_manual = st.tabs(["信号扫描", "单股回测", "使用说明"])
-
-with tab_scan:
-    st.subheader("信号扫描")
-    if market == "A股":
-        st.warning("A股模式使用 Yahoo 日线数据，适合粗筛和学习。它没有实时涨停封单、炸板率、龙虎榜和题材热度。")
+        us_cats = []
+    if scope in ("A股热门池", "美股+A股热门池"):
+        cn_cats = st.multiselect("A股板块", list(CN_POOLS.keys()), default=["AI/算力/软件", "芯片/半导体", "核心大盘/金融消费"])
     else:
-        st.write("判断逻辑：趋势 + 动量 + 放量 + 大盘过滤。结果是观察信号，不是下单命令。")
+        cn_cats = []
 
-    if st.button("开始扫描", type="primary"):
-        if not tickers:
-            st.error("请先输入股票代码。")
+    include_leverage = st.checkbox("包含杠杆ETF", value=False)
+    include_hot = st.checkbox("包含新股/高波动热门", value=True)
+
+    manual_market = "US"
+    manual_raw = ""
+    if scope == "手动输入":
+        manual_market_cn = st.selectbox("手动输入市场", ["美股", "A股"], index=0)
+        manual_market = "CN" if manual_market_cn == "A股" else "US"
+        manual_raw = st.text_area("股票池，用英文逗号分隔", value="NVDA, AMD, TSLA, PLTR, SMH, SOXL" if manual_market == "US" else "600519, 300750, 002594, 600036")
+
+    st.divider()
+    st.header("策略参数")
+    p = Params(
+        short_ma=int(st.number_input("短均线", 2, 60, 5)),
+        long_ma=int(st.number_input("长均线", 5, 200, 20)),
+        vol_multi=float(st.number_input("放量倍数", 1.0, 10.0, 1.5, step=0.1)),
+        min_ret=float(st.number_input("最小当日涨幅%", -10.0, 20.0, 2.0, step=0.5)),
+        stop_loss=float(st.number_input("止损/回撤阈值%", 1.0, 30.0, 5.0, step=0.5)),
+        max_hold=int(st.number_input("最长持仓天数", 1, 60, 5)),
+        min_dollar_vol_us=float(st.number_input("美股最低成交额/美元", 0.0, 500_000_000.0, 50_000_000.0, step=10_000_000.0)),
+        min_turnover_cn=float(st.number_input("A股最低成交额/人民币", 0.0, 1_000_000_000.0, 200_000_000.0, step=50_000_000.0)),
+        max_scan=int(st.number_input("最多扫描数量", 5, 120, 60)),
+    )
+
+if scope == "手动输入":
+    raw_tickers = parse_tickers(manual_raw)
+    scan_items = [(manual_market, cn_to_yahoo(t) if manual_market == "CN" else t) for t in raw_tickers]
+    pool_note = f"手动股票池：{len(scan_items)}只"
+else:
+    scan_items, pool_note = get_pool(scope, us_cats, cn_cats, include_leverage, include_hot)
+
+if len(scan_items) > p.max_scan:
+    scan_items = scan_items[: p.max_scan]
+    pool_note += f"；已按最多扫描数量截断到 {p.max_scan} 只"
+
+tab1, tab2, tab3 = st.tabs(["自动扫描", "单股回测", "说明"])
+
+with tab1:
+    st.subheader("今日自动观察名单")
+    st.write(pool_note)
+    st.markdown("<span class='small-note'>规则：涨幅强 + 成交量放大 + 趋势强 + 过滤低成交。结果只用于观察，不是买入命令。</span>", unsafe_allow_html=True)
+
+    if st.button("开始自动扫描", type="primary"):
+        if not scan_items:
+            st.error("股票池为空。请至少选择一个板块或输入股票。")
         else:
-            with st.spinner("正在拉取行情并计算信号..."):
-                m_ok, m_reason = market_ok(params, period, interval)
-                rows = [scan_ticker(t, params, period, interval, m_ok) for t in tickers]
-                result = pd.DataFrame(rows)
-                sort_map = {"LIMIT_WATCH": 0, "BUY_WATCH": 1, "WATCH": 2, "EXIT_RISK": 3, "NO_TRADE": 4, "NO_DATA": 5}
-                result["_sort"] = result["Signal"].map(sort_map).fillna(9)
-                result = result.sort_values(["_sort", "Score"], ascending=[True, False]).drop(columns=["_sort"])
-            st.info(f"市场过滤：{m_reason}。当前状态：{'通过' if m_ok else '不通过'}")
+            rows = []
+            progress = st.progress(0)
+            status = st.empty()
+            for i, (m, t) in enumerate(scan_items, start=1):
+                status.write(f"正在扫描 {i}/{len(scan_items)}：{display_code(t) if m == 'CN' else t}")
+                rows.append(scan_one(m, t, p, period))
+                progress.progress(i / len(scan_items))
+            progress.empty()
+            status.empty()
+            result = sort_result(pd.DataFrame(rows))
+
+            watch = result[result["信号"].isin(["LIMIT_WATCH", "BUY_WATCH", "WATCH"])].copy()
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("扫描数量", len(result))
+            c2.metric("观察名单", len(watch))
+            c3.metric("强观察", int((result["信号"].isin(["LIMIT_WATCH", "BUY_WATCH"])).sum()))
+            c4.metric("低成交过滤", int((result["信号"] == "FILTER_LOW_LIQ").sum()))
+
+            if watch.empty:
+                st.warning("今天没有强观察名单。正确动作：不急，不追。")
+            else:
+                st.success("今日观察名单：先观察，不要无脑买。")
+                st.dataframe(watch, use_container_width=True, hide_index=True)
+
+            st.write("完整扫描结果")
             st.dataframe(result, use_container_width=True, hide_index=True)
-            st.download_button("下载扫描结果 CSV", data=result.to_csv(index=False).encode("utf-8-sig"),
-                               file_name=f"{'a_share' if market == 'A股' else 'us'}_quant_scan_results.csv", mime="text/csv")
-            watch = result[result["Signal"].isin(["LIMIT_WATCH", "BUY_WATCH"])]
-            if not watch.empty:
-                st.warning("观察信号不是买入命令。A股尤其要看题材、封板质量、换手、炸板率和第二天承接。")
+            st.download_button(
+                "下载今日扫描结果 CSV",
+                data=result.to_csv(index=False).encode("utf-8-sig"),
+                file_name="auto_stock_scan_results.csv",
+                mime="text/csv",
+            )
 
-with tab_backtest:
+            st.info("严格纪律：只看 LIMIT_WATCH / BUY_WATCH / WATCH。EXIT_RISK、NO_TRADE、FILTER_LOW_LIQ 不碰。")
+
+with tab2:
     st.subheader("单股回测")
-    selected = st.selectbox("选择回测股票", tickers if tickers else (["NVDA"] if market == "美股" else ["600519.SS"]))
+    bt_market_cn = st.selectbox("回测市场", ["美股", "A股"], index=0)
+    default_bt = "NVDA" if bt_market_cn == "美股" else "300750"
+    bt_code = st.text_input("代码", value=default_bt)
     if st.button("开始回测", type="primary"):
-        df = load_history(selected, period, interval)
+        market = "CN" if bt_market_cn == "A股" else "US"
+        ticker = cn_to_yahoo(bt_code) if market == "CN" else bt_code.strip().upper()
+        df = load_history(ticker, period=period)
         if df.empty:
-            st.error("无法读取该股票数据。换一个代码，或检查网络。")
+            st.error("数据读不到。换一个代码，或稍后再试。")
         else:
-            market_series = build_market_series(params, period, interval)
-            equity, trades, stats = run_backtest(df, params, market_series)
+            eq, tr, stats = run_backtest(df, p)
             if not stats:
                 st.error("数据不足，无法回测。")
             else:
                 c1, c2, c3, c4, c5 = st.columns(5)
-                c1.metric("总收益", f"{stats['Total_Return_%']}%")
-                c2.metric("最大回撤", f"{stats['Max_Drawdown_%']}%")
-                c3.metric("交易次数", stats["Trades"])
-                c4.metric("胜率", f"{stats['Win_Rate_%']}%")
-                c5.metric("单笔均值", f"{stats['Avg_Trade_%']}%")
-                if not equity.empty:
-                    st.line_chart(equity["Equity"], height=320)
-                ind = add_indicators(df, params).dropna()
-                chart_df = ind[["Close", "MA_SHORT", "MA_LONG"]].rename(columns={"Close": "收盘价", "MA_SHORT": "短均线", "MA_LONG": "长均线"})
-                st.line_chart(chart_df, height=320)
-                st.write("交易明细")
-                if trades.empty:
-                    st.info("该参数下没有触发完整交易。")
+                c1.metric("总收益", f"{stats['总收益%']}%")
+                c2.metric("最大回撤", f"{stats['最大回撤%']}%")
+                c3.metric("交易次数", stats["交易次数"])
+                c4.metric("胜率", f"{stats['胜率%']}%")
+                c5.metric("单笔均值", f"{stats['单笔均值%']}%")
+                if not eq.empty:
+                    st.line_chart(eq["净值"])
+                if tr.empty:
+                    st.info("该参数下没有完整交易。")
                 else:
-                    st.dataframe(trades, use_container_width=True, hide_index=True)
-                    st.download_button("下载回测交易 CSV", data=trades.to_csv(index=False).encode("utf-8-sig"),
-                                       file_name=f"{display_code_from_yahoo(selected)}_backtest_trades.csv", mime="text/csv")
+                    st.dataframe(tr, use_container_width=True, hide_index=True)
 
-with tab_manual:
-    st.subheader("使用说明")
-    st.markdown("""
-### 信号解释
+with tab3:
+    st.subheader("信号说明")
+    st.markdown(
+        """
+| 信号 | 含义 | 动作 |
+|---|---|---|
+| LIMIT_WATCH | A股接近/达到涨停强势观察 | 只观察，确认封板/题材后再说 |
+| BUY_WATCH | 趋势、涨幅、放量都达标 | 重点观察，不是立刻买 |
+| WATCH | 有一定强度 | 继续看，不急 |
+| EXIT_RISK | 趋势或回撤风险高 | 不买 |
+| NO_TRADE | 没机会 | 不买 |
+| FILTER_LOW_LIQ | 成交额太低 | 不碰，容易被收割 |
+| NO_DATA | 数据读不到 | 换代码或稍后再试 |
 
-| 信号 | 含义 |
-|---|---|
-| LIMIT_WATCH | A股强势/接近涨停观察，仍需人工判断封板和题材 |
-| BUY_WATCH | 满足趋势、动量、放量、大盘过滤，进入观察池 |
-| WATCH | 趋势尚可，但动量或量能不足，等确认 |
-| EXIT_RISK | 跌破趋势或回撤风险加大 |
-| NO_TRADE | 不符合交易条件 |
-| NO_DATA | 数据不足或代码错误 |
+### 重要限制
 
-### A股代码怎么填
+这个版本是“热门池自动扫描”，不是全市场毫秒级行情系统。它适合帮你找观察对象和过滤垃圾机会，不适合当自动下单依据。
 
-| 类型 | 输入示例 |
-|---|---|
-| 上海主板/科创板 | 600519 或 600519.SS，688981 或 688981.SS |
-| 深圳主板/创业板 | 000001 或 000001.SZ，300750 或 300750.SZ |
-
-### 必须记住
-
-A股模式只是粗筛。真正短线还要看涨停、连板、炸板率、题材、人气和次日承接。
-没有 BUY_WATCH / LIMIT_WATCH，就不要手痒。
-""")
+A股短线更高级的版本还应该加入：涨停封单、连板高度、炸板率、题材热度、龙虎榜、次日溢价统计。现在先做粗筛，不要过度相信。
+"""
+    )
