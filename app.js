@@ -15,9 +15,14 @@ const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
 function init(){
   $('workerUrl').value = localStorage.getItem('workerUrl') || DEFAULT_WORKER;
-  $('openSettings').onclick = () => $('settingsDrawer').hidden=false;
-  $('closeSettings').onclick = () => $('settingsDrawer').hidden=true;
-  $('saveSettings').onclick = () => { localStorage.setItem('workerUrl',$('workerUrl').value.trim()); alert('已保存'); };
+  const drawer = $('settingsDrawer');
+  const openDrawer = () => { drawer.hidden = false; drawer.style.display = 'flex'; };
+  const closeDrawer = () => { drawer.hidden = true; drawer.style.display = 'none'; };
+  closeDrawer();
+  $('openSettings').onclick = openDrawer;
+  $('closeSettings').onclick = closeDrawer;
+  drawer.addEventListener('click', (e)=>{ if(e.target === drawer) closeDrawer(); });
+  $('saveSettings').onclick = () => { localStorage.setItem('workerUrl',$('workerUrl').value.trim()); alert('已保存'); closeDrawer(); };
   $('testWorker').onclick = testWorker;
   $('scanBtn').onclick = runScan;
   $('quickBtn').onclick = () => { $('scanMode').value='core'; $('scanLimit').value='30'; runScan(); };
