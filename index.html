@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07111f" />
+  <title>AlphaSniper Mobile Cloud</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">Manual Trading · Mobile Cloud</div>
+        <h1>AlphaSniper Mobile V1</h1>
+      </div>
+      <button id="openSettings" class="ghost-btn">设置</button>
+    </header>
+
+    <section class="warning-card">
+      <strong>人工下单版</strong>：系统只负责选股、买入区、止损、止盈；下单前必须用券商价格复核。免费行情不是实盘级行情。
+    </section>
+
+    <section class="market-gate grid3">
+      <div class="mini-card"><span>QQQ</span><b id="qqqVal">--</b><small id="qqqState">等待扫描</small></div>
+      <div class="mini-card"><span>SPY</span><b id="spyVal">--</b><small id="spyState">等待扫描</small></div>
+      <div class="mini-card"><span>市场闸门</span><b id="gateVal">--</b><small id="gateReason">未判断</small></div>
+    </section>
+
+    <section class="control-card">
+      <div class="control-row">
+        <label>扫描模式</label>
+        <select id="scanMode">
+          <option value="core">核心高流动性池（推荐）</option>
+          <option value="ai">AI/半导体/电力链</option>
+          <option value="full">全市场动态池（需要 Worker）</option>
+          <option value="custom">自定义股票池</option>
+        </select>
+      </div>
+      <div class="control-row two">
+        <div>
+          <label>扫描数量</label>
+          <select id="scanLimit">
+            <option>30</option>
+            <option selected>50</option>
+            <option>80</option>
+            <option>120</option>
+          </select>
+        </div>
+        <div>
+          <label>账户资金($)</label>
+          <input id="accountSize" type="number" value="100000" inputmode="decimal" />
+        </div>
+      </div>
+      <div class="control-row two">
+        <div>
+          <label>单笔风险%</label>
+          <input id="riskPct" type="number" value="1" step="0.1" inputmode="decimal" />
+        </div>
+        <div>
+          <label>最低价格($)</label>
+          <input id="minPrice" type="number" value="5" step="0.1" inputmode="decimal" />
+        </div>
+      </div>
+      <div class="control-row">
+        <label>自定义股票（逗号分隔）</label>
+        <textarea id="customSymbols" rows="2" placeholder="例如：MRVL,NVDA,AMAT,AMD"></textarea>
+      </div>
+      <button id="scanBtn" class="primary-btn">开始扫描</button>
+      <button id="quickBtn" class="secondary-btn">只扫核心池 30 只</button>
+      <div id="scanMsg" class="scan-msg">准备就绪</div>
+    </section>
+
+    <section class="stats-row grid4">
+      <div><span>扫描</span><b id="statScanned">-</b></div>
+      <div><span>有效</span><b id="statValid">-</b></div>
+      <div><span>可买</span><b id="statBuy">-</b></div>
+      <div><span>耗时</span><b id="statTime">-</b></div>
+    </section>
+
+    <main class="layout">
+      <section class="list-panel">
+        <div class="section-title">
+          <h2>今日机会池</h2>
+          <small id="lastUpdate">尚未扫描</small>
+        </div>
+        <div class="filter-tabs">
+          <button class="tab active" data-filter="all">全部</button>
+          <button class="tab" data-filter="BUY">可买</button>
+          <button class="tab" data-filter="PULLBACK">等回踩</button>
+          <button class="tab" data-filter="WATCH">观察</button>
+        </div>
+        <div id="cards" class="cards"></div>
+      </section>
+
+      <aside class="detail-panel" id="detailPanel">
+        <div class="empty-detail">先扫描，然后点一只股票。</div>
+      </aside>
+    </main>
+  </div>
+
+  <div class="settings-drawer" id="settingsDrawer" hidden>
+    <div class="drawer-inner">
+      <div class="drawer-head">
+        <h3>数据设置</h3>
+        <button id="closeSettings" class="ghost-btn">关闭</button>
+      </div>
+      <p class="hint">GitHub Pages 只负责页面。若 Safari 抓不到 Yahoo 数据，请把 Cloudflare Worker 地址填在这里。</p>
+      <label>Worker API 地址</label>
+      <input id="workerUrl" type="url" placeholder="https://xxx.workers.dev" />
+      <button id="saveSettings" class="primary-btn">保存设置</button>
+      <button id="testWorker" class="secondary-btn">测试行情连接</button>
+      <pre id="testResult" class="logbox"></pre>
+      <hr />
+      <h4>手机添加到桌面</h4>
+      <p class="hint">Safari 打开网页 → 分享 → 添加到主屏幕。</p>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
